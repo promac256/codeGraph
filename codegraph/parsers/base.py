@@ -1,0 +1,66 @@
+"""Base class and result type for all language parsers."""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from codegraph.models import ClassNode, FileNode, FunctionNode, GraphEdge, TypeNode
+
+
+@dataclass
+class ParseResult:
+    file_node: FileNode
+    functions: list[FunctionNode] = field(default_factory=list)
+    classes: list[ClassNode] = field(default_factory=list)
+    types: list[TypeNode] = field(default_factory=list)
+    imports: list[GraphEdge] = field(default_factory=list)
+    calls: list[GraphEdge] = field(default_factory=list)
+    defines: list[GraphEdge] = field(default_factory=list)
+    inherits: list[GraphEdge] = field(default_factory=list)
+    exports: list[GraphEdge] = field(default_factory=list)
+    todos: list[dict] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+
+
+class LanguageParser(ABC):
+    EXTENSIONS: tuple[str, ...] = ()
+    LANGUAGE_NAME: str = ""
+
+    def can_parse(self, path: Path) -> bool:
+        return path.suffix.lower() in self.EXTENSIONS
+
+    @abstractmethod
+    def parse(self, path: Path, source: bytes, repo_root: Path) -> ParseResult:
+        ...
+
+    def _compute_complexity(self, node) -> int:
+        """Cyclomatic complexity: count branch nodes in AST subtree."""
+        BRANCH_TYPES = {
+            "if_statement", "elif_clause", "while_statement", "for_statement",
+            "try_statement", "except_clause", "with_statement", "match_statement",
+            "case_clause", "conditional_expression", "boolean_operator",
+            "switch_case", "ternary_expression", "catch_clause", "logical_expression",
+            "for_in_statement", "while_statement",
+        }
+        count = 1
+        try:
+            cursor = node.walk()
+            reached_root = False
+            while not reached_root:
+                if cursor.node.type in BRANCH_TYPES:
+                    count += 1
+                if cursor.goto_first_child():
+                    continue
+                if cursor.goto_next_sibling():
+                    continue
+                while True:
+                    if not cursor.goto_parent():
+                        reached_root = True
+                        break
+                    if cursor.goto_next_sibling():
+                        break
+        except Exception:
+            pass
+        return count
