@@ -83,6 +83,9 @@ def init(
     if stats["errors"]:
         console.print(f"  [yellow]Errors:        {stats['errors']}[/yellow]")
 
+    if llm_enrich:
+        _run_enrichment(store, settings, progress_style="bar")
+
     # Generate context pack
     _generate_pack(store, settings, token_budget=token_budget)
     store.close()
@@ -130,6 +133,75 @@ def update(
     console.print(f"  Files deleted:     {stats['files_deleted']}")
 
     _generate_pack(store, settings)
+    store.close()
+
+
+# ---------------------------------------------------------------------------
+# enrich
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def enrich(
+    repo: Path = typer.Argument(default=Path("."), help="Path to git repo"),
+    include_documented: bool = typer.Option(
+        False,
+        "--include-documented/--skip-documented",
+        help="Also enrich symbols that already have docstrings",
+    ),
+    batch_size: int = typer.Option(20, "--batch-size", help="Symbols per API call"),
+):
+    """Generate LLM summaries for undocumented symbols in the graph."""
+    from codegraph.config import Settings
+    from codegraph.graph.store import GraphStore
+
+    settings = Settings.from_repo(repo)
+    if not settings.db_path.exists():
+        console.print("[red]No graph found. Run `codegraph init` first.[/red]")
+        raise typer.Exit(1)
+
+    store = GraphStore(settings.db_path)
+    store.open()
+    store.load_graph_to_memory()
+
+    from codegraph.enrichment.llm_enricher import LLMEnricher
+    from rich.progress import (
+        BarColumn,
+        Progress,
+        SpinnerColumn,
+        TaskProgressColumn,
+        TextColumn,
+        TimeElapsedColumn,
+    )
+
+    enricher = LLMEnricher(store, settings)
+    console.print("[bold cyan]LLM enrichment[/bold cyan] — using Anthropic Haiku...")
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+        console=console,
+    ) as progress:
+        stats = enricher.enrich(
+            skip_documented=not include_documented,
+            batch_size=batch_size,
+            progress=progress,
+        )
+
+    console.print(
+        f"\n[green]Enrichment complete:[/green]\n"
+        f"  Generated (API): {stats['enriched']}\n"
+        f"  From cache:      {stats['cached']}\n"
+        f"  Skipped:         {stats['skipped']}\n"
+        f"  Errors:          {stats['errors']}"
+    )
+    if stats["errors"] and not settings.anthropic_api_key:
+        console.print(
+            "[yellow]Tip:[/yellow] Set CODEGRAPH_ANTHROPIC_API_KEY to enable API calls."
+        )
+
     store.close()
 
 
@@ -415,6 +487,37 @@ def watch(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _run_enrichment(store, settings, progress_style: str = "spinner") -> None:
+    from rich.progress import (
+        BarColumn,
+        Progress,
+        SpinnerColumn,
+        TaskProgressColumn,
+        TextColumn,
+        TimeElapsedColumn,
+    )
+
+    from codegraph.enrichment.llm_enricher import LLMEnricher
+
+    enricher = LLMEnricher(store, settings)
+    console.print("\n[bold cyan]LLM enrichment[/bold cyan] — generating summaries for undocumented symbols...")
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+        console=console,
+    ) as progress:
+        stats = enricher.enrich(progress=progress)
+    console.print(
+        f"  Enriched:  {stats['enriched']}  "
+        f"Cached: {stats['cached']}  "
+        f"Skipped: {stats['skipped']}  "
+        f"Errors: {stats['errors']}"
+    )
 
 
 def _generate_pack(store, settings, token_budget: int = 8000) -> None:
