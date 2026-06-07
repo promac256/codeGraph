@@ -223,40 +223,19 @@ def codegraph_impact_analysis(symbol_name: str, max_depth: int = 3) -> dict:
 @mcp.tool()
 def codegraph_conventions() -> dict:
     """
-    Get detected code conventions, naming patterns, and anti-patterns in the codebase.
-    Useful for understanding team standards before writing new code.
+    Get detected code conventions, naming patterns, and code idioms in the codebase.
+
+    Returns: naming styles (snake_case vs camelCase), documentation coverage,
+    async/decorator patterns, complexity stats, top imports, test ratios, and
+    language breakdown. Run `codegraph init` or `codegraph update` to refresh.
     """
     q = _get_query()
-    # Summarise naming patterns from the graph
-    from codegraph.models import NodeKind
-    G = q.store.graph
-    func_names = [d.get("name", "") for _, d in G.nodes(data=True) if d.get("kind") == NodeKind.FUNCTION]
-    class_names = [d.get("name", "") for _, d in G.nodes(data=True) if d.get("kind") == NodeKind.CLASS]
-
-    snake_case = sum(1 for n in func_names if "_" in n and n == n.lower())
-    camel_case = sum(1 for n in func_names if any(c.isupper() for c in n[1:]) and "_" not in n)
-    async_funcs = sum(1 for _, d in G.nodes(data=True) if d.get("is_async"))
-    properties = sum(1 for _, d in G.nodes(data=True) if d.get("is_property"))
-    abstract_classes = sum(1 for _, d in G.nodes(data=True) if d.get("is_abstract"))
-    dataclasses = sum(1 for _, d in G.nodes(data=True) if d.get("is_dataclass"))
-
-    return {
-        "naming": {
-            "function_style": "snake_case" if snake_case >= camel_case else "camelCase",
-            "snake_case_functions": snake_case,
-            "camel_case_functions": camel_case,
-        },
-        "patterns": {
-            "async_functions": async_funcs,
-            "property_decorators": properties,
-            "abstract_classes": abstract_classes,
-            "dataclasses": dataclasses,
-        },
-        "totals": {
-            "functions": len(func_names),
-            "classes": len(class_names),
-        },
-    }
+    from codegraph.enrichment.convention_miner import ConventionMiner
+    stored = ConventionMiner.load(q.store)
+    if stored:
+        return stored
+    # Fallback: compute on-the-fly if init hasn't been run yet
+    return ConventionMiner(q.store).mine()
 
 
 @mcp.tool()

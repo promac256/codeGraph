@@ -75,6 +75,10 @@ def init(
     # Annotate architectural layers
     LayerDetector().annotate_store(store)
 
+    # Mine conventions
+    from codegraph.enrichment.convention_miner import ConventionMiner
+    ConventionMiner(store).mine_and_save()
+
     console.print(f"\n[green]Graph built successfully:[/green]")
     console.print(f"  Files parsed:  {stats['files_parsed']}")
     console.print(f"  Files skipped: {stats['files_skipped']}")
@@ -126,6 +130,8 @@ def update(
     stats = updater.update_from_commits(since_sha=since)
 
     LayerDetector().annotate_store(store)
+    from codegraph.enrichment.convention_miner import ConventionMiner
+    ConventionMiner(store).mine_and_save()
 
     console.print(f"[green]Update complete:[/green]")
     console.print(f"  Commits processed: {stats['commits_processed']}")
