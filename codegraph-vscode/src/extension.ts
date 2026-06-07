@@ -8,15 +8,16 @@ import { registerDiagnosticsWatcher } from './editor/diagnostics';
 
 let mcpClient: McpClient | null = null;
 
-export function activate(context: vscode.ExtensionContext): void {
+export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const repoPath = getRepoPath();
-
   if (repoPath) {
-    mcpClient = new McpClient(repoPath);
-    mcpClient.start();
+    mcpClient = await startClient(repoPath);
   }
 
+  // -------------------------------------------------------------------------
   // Commands
+  // -------------------------------------------------------------------------
+
   context.subscriptions.push(
     vscode.commands.registerCommand('codegraph.showGraph', () => {
       if (!mcpClient) {
@@ -28,22 +29,18 @@ export function activate(context: vscode.ExtensionContext): void {
 
     vscode.commands.registerCommand('codegraph.initGraph', async () => {
       const rp = getRepoPath();
-      if (!rp) {
-        vscode.window.showErrorMessage('codeGraph: No workspace folder open.');
-        return;
-      }
-      await runCodegraphCommand(rp, ['init', rp, '--workers', '8']);
-      // Restart MCP client to pick up new graph
+      if (!rp) { vscode.window.showErrorMessage('codeGraph: No workspace folder open.'); return; }
+      await runCodegraphInTerminal(rp, ['init', rp, '--workers', '8']);
+      // Restart client so it reloads the freshly built graph
       mcpClient?.dispose();
-      mcpClient = new McpClient(rp);
-      mcpClient.start();
+      mcpClient = await startClient(rp);
       vscode.window.showInformationMessage('codeGraph: Graph built successfully.');
     }),
 
     vscode.commands.registerCommand('codegraph.updateGraph', async () => {
       const rp = getRepoPath();
       if (!rp) return;
-      await runCodegraphCommand(rp, ['update', rp]);
+      await runCodegraphInTerminal(rp, ['update', rp]);
       vscode.window.showInformationMessage('codeGraph: Graph updated.');
     }),
 
@@ -56,7 +53,7 @@ export function activate(context: vscode.ExtensionContext): void {
         panel.focusNode(`file:${relPath}`);
       } else if (mcpClient) {
         const p = GraphWebviewPanel.show(context.extensionUri, mcpClient);
-        setTimeout(() => p.focusNode(`file:${relPath}`), 1000);
+        setTimeout(() => p.focusNode(`file:${relPath}`), 1200);
       }
     }),
 
@@ -65,34 +62,26 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
   );
 
+  // -------------------------------------------------------------------------
+  // Copilot + diagnostics
+  // -------------------------------------------------------------------------
+
   if (mcpClient) {
-    // Register GitHub Copilot language model tools
     registerCopilotTools(context, mcpClient);
-
-    // Register @codegraph chat participant
     registerChatParticipant(context, mcpClient);
-
-    // Watch diagnostics for error tracing
     registerDiagnosticsWatcher(context, mcpClient);
   }
 
-  // Watch for workspace folder changes and restart the client
+  // Re-init client when workspace changes
   context.subscriptions.push(
-    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+    vscode.workspace.onDidChangeWorkspaceFolders(async () => {
       mcpClient?.dispose();
       const rp = getRepoPath();
-      if (rp) {
-        mcpClient = new McpClient(rp);
-        mcpClient.start();
-      }
+      mcpClient = rp ? await startClient(rp) : null;
     }),
   );
 
-  context.subscriptions.push({
-    dispose() {
-      mcpClient?.dispose();
-    },
-  });
+  context.subscriptions.push({ dispose() { mcpClient?.dispose(); } });
 }
 
 export function deactivate(): void {
@@ -100,29 +89,42 @@ export function deactivate(): void {
   mcpClient = null;
 }
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+async function startClient(repoPath: string): Promise<McpClient> {
+  const client = new McpClient(repoPath);
+  try {
+    await client.start();
+    const label = client.transport === 'sse'
+      ? `codeGraph: connected via SSE (shared server on port ${getPort()})`
+      : 'codeGraph: started private MCP server (stdio)';
+    vscode.window.setStatusBarMessage(label, 5000);
+  } catch (err) {
+    vscode.window.showWarningMessage(`codeGraph: MCP server failed to start — ${err}. Run "codeGraph: Initialize / Rebuild Graph".`);
+  }
+  return client;
+}
+
 function getRepoPath(): string | undefined {
   return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 }
 
-async function runCodegraphCommand(cwd: string, args: string[]): Promise<void> {
+function getPort(): number {
+  return vscode.workspace.getConfiguration('codegraph').get<number>('ssePort', 8765);
+}
+
+async function runCodegraphInTerminal(cwd: string, args: string[]): Promise<void> {
   const config = vscode.workspace.getConfiguration('codegraph');
-  const pythonPath = config.get<string>('pythonPath') || '';
+  const pythonPath = config.get<string>('pythonPath') ?? '';
   const cmd = pythonPath
     ? path.join(path.dirname(pythonPath), 'codegraph')
     : 'codegraph';
 
-  return new Promise((resolve, reject) => {
-    const { spawn } = require('child_process') as typeof import('child_process');
-
-    const terminal = vscode.window.createTerminal({
-      name: 'codeGraph',
-      cwd,
-    });
-    terminal.show();
-    terminal.sendText(`${cmd} ${args.join(' ')}`);
-
-    // We can't easily wait for the terminal to finish; resolve after a short delay
-    // In a real extension you'd use a Task or OutputChannel instead
-    setTimeout(resolve, 500);
-  });
+  const terminal = vscode.window.createTerminal({ name: 'codeGraph', cwd });
+  terminal.show();
+  terminal.sendText(`${cmd} ${args.join(' ')}`);
+  // Give the terminal command time to start before returning
+  await new Promise<void>((r) => setTimeout(r, 400));
 }

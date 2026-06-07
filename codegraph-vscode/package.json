@@ -75,6 +75,17 @@
           "type": "number",
           "default": 8000,
           "description": "Token budget for context pack generation."
+        },
+        "codegraph.transport": {
+          "type": "string",
+          "enum": ["auto", "sse", "stdio"],
+          "default": "auto",
+          "description": "MCP transport. 'auto' probes for a running SSE server first (shared with Claude Code desktop), then falls back to spawning a private stdio subprocess. 'sse' requires a running server. 'stdio' always spawns a subprocess."
+        },
+        "codegraph.ssePort": {
+          "type": "number",
+          "default": 8765,
+          "description": "Port to connect to (or probe) when using SSE transport. Must match the --port passed to 'codegraph serve --transport sse'."
         }
       }
     },
