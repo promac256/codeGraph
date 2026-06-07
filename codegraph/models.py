@@ -79,6 +79,7 @@ class ClassNode(BaseNode):
     llm_summary: str | None = None
     is_abstract: bool = False
     is_dataclass: bool = False
+    is_exported: bool = True
 
 
 class FunctionNode(BaseNode):
@@ -95,6 +96,7 @@ class FunctionNode(BaseNode):
     is_property: bool = False
     is_classmethod: bool = False
     is_staticmethod: bool = False
+    is_exported: bool = True
     complexity: int = 1
     pagerank: float = 0.0
 

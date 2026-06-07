@@ -40,4 +40,11 @@ class ParserRegistry:
         except ImportError:
             pass
 
+        # Go
+        try:
+            from codegraph.parsers.go_parser import GoParser
+            registry.register(GoParser())
+        except ImportError:
+            pass
+
         return registry
