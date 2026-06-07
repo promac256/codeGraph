@@ -297,6 +297,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.x",
+    "@types/three": "^0.165.0",
     "@types/vscode": "^1.93.0",
     "@typescript-eslint/eslint-plugin": "^7.0.0",
     "@typescript-eslint/parser": "^7.0.0",
@@ -305,7 +306,7 @@
     "typescript": "^5.4.0"
   },
   "dependencies": {
-    "cytoscape": "^3.30.0",
-    "cytoscape-cose-bilkent": "^4.1.0"
+    "3d-force-graph": "^1.73.0",
+    "three": "^0.165.0"
   }
 }

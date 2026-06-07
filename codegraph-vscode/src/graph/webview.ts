@@ -198,36 +198,134 @@ export class GraphWebviewPanel {
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline';">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; img-src data: blob:; worker-src blob:;">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>codeGraph</title>
+<title>codeGraph 3D</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: #0f1117; color: #e0e0e0; font-family: var(--vscode-font-family, monospace); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
-  #toolbar { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: #1a1d27; border-bottom: 1px solid #2a2d3e; flex-shrink: 0; }
-  #toolbar input { background: #252838; border: 1px solid #3a3d52; color: #e0e0e0; padding: 4px 8px; border-radius: 4px; font-size: 12px; width: 200px; }
-  #toolbar button { background: #2a2d3e; border: 1px solid #3a3d52; color: #e0e0e0; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; }
-  #toolbar button:hover { background: #3a3d52; }
+  body {
+    background: #0f1117;
+    color: #e0e0e0;
+    font-family: var(--vscode-font-family, 'JetBrains Mono', monospace);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  #toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 10px;
+    background: #12141f;
+    border-bottom: 1px solid #1e2133;
+    flex-shrink: 0;
+    z-index: 10;
+  }
+  #toolbar input {
+    background: #1a1d2e;
+    border: 1px solid #2e3255;
+    color: #c8cce8;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    width: 180px;
+    outline: none;
+  }
+  #toolbar input:focus { border-color: #5c6bc0; }
+  #toolbar button {
+    background: #1e2133;
+    border: 1px solid #2e3255;
+    color: #c8cce8;
+    padding: 3px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 11px;
+  }
+  #toolbar button:hover { background: #2e3255; }
   #toolbar .spacer { flex: 1; }
-  #toolbar .status { font-size: 11px; color: #8888aa; }
-  #cy { flex: 1; width: 100%; }
-  #tooltip { position: absolute; background: #1a1d27; border: 1px solid #3a3d52; border-radius: 6px; padding: 8px 10px; font-size: 11px; pointer-events: none; display: none; max-width: 280px; z-index: 100; line-height: 1.5; }
-  #tooltip .t-name { font-weight: bold; color: #a0cfff; }
-  #tooltip .t-kind { color: #8888aa; font-size: 10px; }
-  #tooltip .t-file { color: #88ccaa; font-size: 10px; word-break: break-all; }
-  #error-banner { display: none; background: #3d1a1a; border-bottom: 1px solid #ff4444; padding: 4px 10px; font-size: 11px; color: #ff8888; flex-shrink: 0; }
+  #toolbar .status { font-size: 10px; color: #5c6080; letter-spacing: 0.03em; }
+  /* Legend chips */
+  #legend {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px;
+    background: #0d0f1a;
+    border-bottom: 1px solid #1a1d2e;
+    flex-wrap: wrap;
+    flex-shrink: 0;
+  }
+  .legend-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 9px;
+    color: #888aaa;
+    letter-spacing: 0.04em;
+  }
+  .legend-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+  #cy { flex: 1; width: 100%; position: relative; }
+  /* Tooltip */
+  #tooltip {
+    position: fixed;
+    background: rgba(14, 16, 28, 0.92);
+    border: 1px solid #2e3255;
+    border-radius: 7px;
+    padding: 8px 11px;
+    font-size: 11px;
+    pointer-events: none;
+    display: none;
+    max-width: 290px;
+    z-index: 200;
+    line-height: 1.6;
+    backdrop-filter: blur(6px);
+    box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+  }
+  #tooltip .t-name { font-weight: 700; color: #7eb8f7; font-size: 12px; }
+  #tooltip .t-kind { color: #5c6bc0; font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
+  #tooltip .t-file { color: #66bb9a; font-size: 10px; word-break: break-all; margin-top: 2px; }
+  #tooltip .t-meta { color: #7880a0; font-size: 10px; }
+  #tooltip .t-hint { color: #444466; font-size: 9px; margin-top: 4px; font-style: italic; }
+  /* Error banner */
+  #error-banner {
+    display: none;
+    background: linear-gradient(90deg, #2a0808, #1a0505);
+    border-bottom: 1px solid #ff333355;
+    padding: 4px 12px;
+    font-size: 11px;
+    color: #ff7070;
+    flex-shrink: 0;
+    z-index: 10;
+  }
 </style>
 </head>
 <body>
 <div id="toolbar">
-  <input id="search" type="text" placeholder="Filter nodes..." />
-  <button id="btn-fit">Fit</button>
-  <button id="btn-refresh">Refresh</button>
-  <button id="btn-clear-errors">Clear Errors</button>
+  <input id="search" type="text" placeholder="Filter nodes…" autocomplete="off" />
+  <button id="btn-fit">Fit All</button>
+  <button id="btn-refresh">↻ Refresh</button>
+  <button id="btn-clear-errors">✕ Clear Errors</button>
   <span class="spacer"></span>
-  <span id="status" class="status">Loading...</span>
+  <span id="status" class="status">Loading…</span>
 </div>
-<div id="error-banner" id="err-banner"></div>
+<div id="legend">
+  <span class="legend-chip"><span class="legend-dot" style="background:#4fc3f7"></span>presentation</span>
+  <span class="legend-chip"><span class="legend-dot" style="background:#81c784"></span>business</span>
+  <span class="legend-chip"><span class="legend-dot" style="background:#ffb74d"></span>data</span>
+  <span class="legend-chip"><span class="legend-dot" style="background:#e57373"></span>infra</span>
+  <span class="legend-chip"><span class="legend-dot" style="background:#b39ddb"></span>config</span>
+  <span class="legend-chip"><span class="legend-dot" style="background:#90a4ae"></span>utility</span>
+  <span class="legend-chip"><span class="legend-dot" style="background:#ce93d8"></span>test</span>
+  <span class="legend-chip" style="margin-left:8px;color:#444">▲file ●func ◆class □type △test</span>
+</div>
+<div id="error-banner"></div>
 <div id="cy"></div>
 <div id="tooltip"></div>
 <script nonce="${nonce}" src="${webviewUri}"></script>

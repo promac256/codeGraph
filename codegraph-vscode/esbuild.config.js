@@ -24,6 +24,10 @@ const webviewConfig = {
   target: 'es2022',
   sourcemap: true,
   minify: !watch,
+  // 3d-force-graph uses some Node-style globals in rare paths; stub them
+  define: {
+    'process.env.NODE_ENV': '"production"',
+  },
 };
 
 async function build() {
