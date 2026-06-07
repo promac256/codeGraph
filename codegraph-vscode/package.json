@@ -1,0 +1,311 @@
+{
+  "name": "codegraph",
+  "displayName": "codeGraph — Knowledge Graph Copilot",
+  "description": "Knowledge graph for your codebase. Wires into GitHub Copilot and shows a live hive visualization of all code nodes and relationships.",
+  "version": "0.1.0",
+  "publisher": "codegraph",
+  "engines": {
+    "vscode": "^1.93.0"
+  },
+  "categories": ["Other", "Visualization", "AI"],
+  "keywords": ["copilot", "knowledge graph", "code navigation", "ai", "mcp"],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "codegraph.showGraph",
+        "title": "codeGraph: Show Graph View",
+        "icon": "$(type-hierarchy)"
+      },
+      {
+        "command": "codegraph.initGraph",
+        "title": "codeGraph: Initialize / Rebuild Graph"
+      },
+      {
+        "command": "codegraph.updateGraph",
+        "title": "codeGraph: Update Graph from Recent Commits"
+      },
+      {
+        "command": "codegraph.focusNode",
+        "title": "codeGraph: Focus Current File in Graph"
+      },
+      {
+        "command": "codegraph.clearErrorHighlights",
+        "title": "codeGraph: Clear Error Highlights"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "codegraph.focusNode",
+          "when": "resourceScheme == file",
+          "group": "navigation"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "codegraph.showGraph",
+        "key": "ctrl+shift+g",
+        "mac": "cmd+shift+g"
+      }
+    ],
+    "configuration": {
+      "title": "codeGraph",
+      "properties": {
+        "codegraph.pythonPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to Python executable with codegraph installed. Leave blank to use the first 'codegraph' found on PATH."
+        },
+        "codegraph.autoUpdate": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically update the graph when git commits are detected."
+        },
+        "codegraph.errorTracing": {
+          "type": "boolean",
+          "default": true,
+          "description": "Highlight error paths in the graph when diagnostics change."
+        },
+        "codegraph.tokenBudget": {
+          "type": "number",
+          "default": 8000,
+          "description": "Token budget for context pack generation."
+        }
+      }
+    },
+    "languageModelTools": [
+      {
+        "name": "codegraph_find_symbol",
+        "displayName": "Find Symbol Definition",
+        "modelDescription": "Find where a code symbol (function, class, type) is defined in the codebase. Returns file path and line number.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "findSymbol",
+        "tags": ["codegraph", "navigation"],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "symbol_name": { "type": "string", "description": "Name of the symbol to find" },
+            "kind": { "type": "string", "description": "Symbol kind: function|class|type|file|any", "default": "any" }
+          },
+          "required": ["symbol_name"]
+        }
+      },
+      {
+        "name": "codegraph_find_callers",
+        "displayName": "Find Callers",
+        "modelDescription": "Find all callers of a function or method. Returns a list of call sites with file and line.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "findCallers",
+        "tags": ["codegraph", "navigation"],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "symbol_name": { "type": "string", "description": "Function or method name" },
+            "depth": { "type": "number", "description": "How many levels of callers to traverse", "default": 1 }
+          },
+          "required": ["symbol_name"]
+        }
+      },
+      {
+        "name": "codegraph_get_dependencies",
+        "displayName": "Get Dependencies",
+        "modelDescription": "Get direct and transitive imports/dependencies of a file or module.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "getDependencies",
+        "tags": ["codegraph"],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "file_path": { "type": "string", "description": "Relative file path" },
+            "depth": { "type": "number", "description": "Traversal depth", "default": 2 }
+          },
+          "required": ["file_path"]
+        }
+      },
+      {
+        "name": "codegraph_recent_changes",
+        "displayName": "Recent Changes",
+        "modelDescription": "Show recent git commits and the symbols they impacted.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "recentChanges",
+        "tags": ["codegraph", "git"],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "limit": { "type": "number", "description": "Number of commits to return", "default": 10 }
+          }
+        }
+      },
+      {
+        "name": "codegraph_hot_paths",
+        "displayName": "Hot Paths Heatmap",
+        "modelDescription": "Show the most active files and functions ranked by PageRank score and commit frequency.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "hotPaths",
+        "tags": ["codegraph"],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "top_n": { "type": "number", "description": "How many results to return", "default": 20 }
+          }
+        }
+      },
+      {
+        "name": "codegraph_test_coverage",
+        "displayName": "Test Coverage",
+        "modelDescription": "Find test functions that cover a given symbol.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "testCoverage",
+        "tags": ["codegraph", "testing"],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "symbol_name": { "type": "string", "description": "Symbol to check coverage for" }
+          },
+          "required": ["symbol_name"]
+        }
+      },
+      {
+        "name": "codegraph_public_api",
+        "displayName": "Public API Surface",
+        "modelDescription": "List all public (non-private) exported symbols for a file or the entire repo.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "publicApi",
+        "tags": ["codegraph"],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "file_path": { "type": "string", "description": "Relative file path (optional, omit for all files)" }
+          }
+        }
+      },
+      {
+        "name": "codegraph_todos",
+        "displayName": "TODOs and FIXMEs",
+        "modelDescription": "List all TODO, FIXME, HACK, BUG comments in the codebase with file and line.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "todos",
+        "tags": ["codegraph"],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "kind": { "type": "string", "description": "Filter by kind: TODO|FIXME|HACK|BUG|NOTE" },
+            "limit": { "type": "number", "default": 50 }
+          }
+        }
+      },
+      {
+        "name": "codegraph_search",
+        "displayName": "Semantic Search",
+        "modelDescription": "Full-text search over symbol names and docstrings using FTS5.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "search",
+        "tags": ["codegraph"],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": { "type": "string", "description": "Search terms" },
+            "limit": { "type": "number", "default": 20 }
+          },
+          "required": ["query"]
+        }
+      },
+      {
+        "name": "codegraph_architectural_layers",
+        "displayName": "Architectural Layers",
+        "modelDescription": "Show which architectural layer each file belongs to (presentation, business, data, etc).",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "architecturalLayers",
+        "tags": ["codegraph", "architecture"],
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        }
+      },
+      {
+        "name": "codegraph_impact_analysis",
+        "displayName": "Impact Analysis",
+        "modelDescription": "Blast radius analysis: what code would break or need changes if a symbol is modified.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "impactAnalysis",
+        "tags": ["codegraph"],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "symbol_name": { "type": "string", "description": "Symbol to analyze impact for" },
+            "max_depth": { "type": "number", "default": 3 }
+          },
+          "required": ["symbol_name"]
+        }
+      },
+      {
+        "name": "codegraph_conventions",
+        "displayName": "Code Conventions",
+        "modelDescription": "Show naming conventions, coding patterns, and anti-patterns detected in the codebase.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "conventions",
+        "tags": ["codegraph", "standards"],
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        }
+      }
+    ],
+    "chatParticipants": [
+      {
+        "id": "codegraph.assistant",
+        "name": "codegraph",
+        "fullName": "codeGraph Assistant",
+        "description": "Query the codeGraph knowledge graph — find symbols, trace errors, understand architecture.",
+        "isSticky": true,
+        "commands": [
+          { "name": "symbol",    "description": "Look up where a symbol is defined — @codegraph /symbol UserRouter" },
+          { "name": "callers",   "description": "Find what calls a function — @codegraph /callers process_payment" },
+          { "name": "impact",    "description": "Blast radius of changing a symbol — @codegraph /impact DatabaseClient" },
+          { "name": "deps",      "description": "Show file dependencies — @codegraph /deps src/api/routes.py" },
+          { "name": "hotspots",  "description": "Show high-churn complex files — @codegraph /hotspots" },
+          { "name": "overview",  "description": "Repository architecture overview — @codegraph /overview" },
+          { "name": "search",    "description": "Full-text search — @codegraph /search payment processing" },
+          { "name": "todos",     "description": "List open TODOs and FIXMEs — @codegraph /todos" },
+          { "name": "errors",    "description": "Trace the current error in the editor — @codegraph /errors" }
+        ]
+      }
+    ],
+    "views": {
+      "explorer": [
+        {
+          "type": "webview",
+          "id": "codegraph.graphView",
+          "name": "codeGraph",
+          "icon": "$(type-hierarchy)",
+          "contextualTitle": "codeGraph Knowledge Graph"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run bundle",
+    "bundle": "node esbuild.config.js",
+    "watch": "node esbuild.config.js --watch",
+    "lint": "eslint src --ext ts",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/node": "^20.x",
+    "@types/vscode": "^1.93.0",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "esbuild": "^0.21.0",
+    "eslint": "^8.0.0",
+    "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "cytoscape": "^3.30.0",
+    "cytoscape-cose-bilkent": "^4.1.0"
+  }
+}

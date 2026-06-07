@@ -21,6 +21,17 @@ _graph_query = None
 _graph_store = None
 
 
+def _resolve_symbol_id(q, name_or_id: str) -> str:
+    """Accept either a bare symbol name or an already-qualified node_id."""
+    # If it looks like a node_id (contains ':') treat it as-is
+    if ":" in name_or_id:
+        return name_or_id
+    results = q.find_definition(name_or_id, "any")
+    if results:
+        return results[0].node_id
+    return name_or_id
+
+
 def _get_query():
     global _graph_query, _graph_store
 
@@ -72,15 +83,16 @@ def codegraph_find_symbol(name: str, kind: str = "any") -> dict:
 
 
 @mcp.tool()
-def codegraph_find_callers(symbol_id: str, depth: int = 1) -> dict:
+def codegraph_find_callers(symbol_name: str, depth: int = 1) -> dict:
     """
     Find all callers of a function.
 
     Args:
-        symbol_id: The node_id from codegraph_find_symbol.
+        symbol_name: Symbol name or node_id. If a name, the top match is used.
         depth: Call depth to traverse (1=direct callers, 2=callers of callers).
     """
     q = _get_query()
+    symbol_id = _resolve_symbol_id(q, symbol_name)
     callers = q.get_callers(symbol_id, depth)
     return {"symbol": symbol_id, "depth": depth, "callers": callers, "count": len(callers)}
 
@@ -124,14 +136,15 @@ def codegraph_hot_paths(top_n: int = 20) -> dict:
 
 
 @mcp.tool()
-def codegraph_test_coverage(symbol_id: str) -> dict:
+def codegraph_test_coverage(symbol_name: str) -> dict:
     """
     Find what tests cover a specific function or class.
 
     Args:
-        symbol_id: The node_id of the function/class to check.
+        symbol_name: Symbol name or node_id.
     """
     q = _get_query()
+    symbol_id = _resolve_symbol_id(q, symbol_name)
     return q.get_test_coverage(symbol_id)
 
 
@@ -187,22 +200,63 @@ def codegraph_architectural_layers() -> dict:
     layers = q.get_architectural_layers()
     return {
         "layers": {
-            k: [f.replace("file:", "") for f in v] for k, v in layers.items()
+            k: list(v) for k, v in layers.items()
         }
     }
 
 
 @mcp.tool()
-def codegraph_impact_analysis(symbol_id: str) -> dict:
+def codegraph_impact_analysis(symbol_name: str, max_depth: int = 3) -> dict:
     """
     Analyze the blast radius of changing a symbol.
     Returns all code that would be affected by modifying this function/class.
 
     Args:
-        symbol_id: The node_id of the symbol to analyze.
+        symbol_name: Symbol name or node_id. If a name, the top match is used.
+        max_depth: How many hops to traverse (default 3).
     """
     q = _get_query()
-    return q.impact_analysis(symbol_id)
+    symbol_id = _resolve_symbol_id(q, symbol_name)
+    return q.impact_analysis(symbol_id, max_depth)
+
+
+@mcp.tool()
+def codegraph_conventions() -> dict:
+    """
+    Get detected code conventions, naming patterns, and anti-patterns in the codebase.
+    Useful for understanding team standards before writing new code.
+    """
+    q = _get_query()
+    # Summarise naming patterns from the graph
+    from codegraph.models import NodeKind
+    G = q.store.graph
+    func_names = [d.get("name", "") for _, d in G.nodes(data=True) if d.get("kind") == NodeKind.FUNCTION]
+    class_names = [d.get("name", "") for _, d in G.nodes(data=True) if d.get("kind") == NodeKind.CLASS]
+
+    snake_case = sum(1 for n in func_names if "_" in n and n == n.lower())
+    camel_case = sum(1 for n in func_names if any(c.isupper() for c in n[1:]) and "_" not in n)
+    async_funcs = sum(1 for _, d in G.nodes(data=True) if d.get("is_async"))
+    properties = sum(1 for _, d in G.nodes(data=True) if d.get("is_property"))
+    abstract_classes = sum(1 for _, d in G.nodes(data=True) if d.get("is_abstract"))
+    dataclasses = sum(1 for _, d in G.nodes(data=True) if d.get("is_dataclass"))
+
+    return {
+        "naming": {
+            "function_style": "snake_case" if snake_case >= camel_case else "camelCase",
+            "snake_case_functions": snake_case,
+            "camel_case_functions": camel_case,
+        },
+        "patterns": {
+            "async_functions": async_funcs,
+            "property_decorators": properties,
+            "abstract_classes": abstract_classes,
+            "dataclasses": dataclasses,
+        },
+        "totals": {
+            "functions": len(func_names),
+            "classes": len(class_names),
+        },
+    }
 
 
 @mcp.tool()
