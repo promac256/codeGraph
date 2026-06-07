@@ -47,4 +47,11 @@ class ParserRegistry:
         except ImportError:
             pass
 
+        # Rust
+        try:
+            from codegraph.parsers.rust_parser import RustParser
+            registry.register(RustParser())
+        except ImportError:
+            pass
+
         return registry
