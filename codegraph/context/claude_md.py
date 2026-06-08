@@ -70,6 +70,13 @@ _TEMPLATE = """\
 - **{{ t.kind }}** `{{ t.file }}:{{ t.line }}` — {{ t.text | truncate(100) }}
 {% endfor %}
 
+{% if pack.pr_patterns and pack.pr_patterns.top_themes %}
+## PR Review Patterns ({{ pack.pr_patterns.prs_analyzed }} PRs analyzed)
+
+Recurring reviewer feedback themes: {{ pack.pr_patterns.top_themes | join(', ') | replace('_', ' ') }}.
+Use `codegraph_pr_patterns` for full details.
+
+{% endif %}
 {% if pack.session_notes %}
 ## Session Notes ({{ pack.session_notes | length }} most recent)
 

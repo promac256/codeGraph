@@ -53,5 +53,39 @@ class GitHubClient:
         resp.raise_for_status()
         return resp.json()
 
+    def get_merged_prs(
+        self, owner: str, repo: str, limit: int = 30
+    ) -> list[dict]:
+        """Return recently merged pull requests."""
+        resp = self._client.get(
+            f"{self.BASE}/repos/{owner}/{repo}/pulls",
+            params={"state": "closed", "sort": "updated", "direction": "desc",
+                    "per_page": min(limit, 100)},
+        )
+        resp.raise_for_status()
+        return [pr for pr in resp.json() if pr.get("merged_at")][:limit]
+
+    def get_pr_review_comments(
+        self, owner: str, repo: str, pr_number: int
+    ) -> list[dict]:
+        """Return inline review comments on a PR."""
+        resp = self._client.get(
+            f"{self.BASE}/repos/{owner}/{repo}/pulls/{pr_number}/comments",
+            params={"per_page": 100},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_pr_reviews(
+        self, owner: str, repo: str, pr_number: int
+    ) -> list[dict]:
+        """Return top-level reviews (body text) on a PR."""
+        resp = self._client.get(
+            f"{self.BASE}/repos/{owner}/{repo}/pulls/{pr_number}/reviews",
+            params={"per_page": 100},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     def close(self) -> None:
         self._client.close()

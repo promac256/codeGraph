@@ -334,6 +334,28 @@ def codegraph_add_session_note(note: str, category: str = "general") -> dict:
 
 
 @mcp.tool()
+def codegraph_pr_patterns() -> dict:
+    """
+    Return recurring PR review feedback themes mined from merged GitHub PRs.
+
+    Themes include: type_hints, error_handling, testing, documentation,
+    naming, complexity, performance, security, imports, style.
+
+    Run `codegraph pr-patterns --owner ORG --repo REPO` to populate.
+    Returns an empty dict if no PR pattern data has been stored yet.
+    """
+    q = _get_query()
+    from codegraph.enrichment.pr_pattern_miner import PRPatternMiner
+    stored = PRPatternMiner.load(q.store)
+    if stored:
+        return stored
+    return {
+        "error": "No PR pattern data stored. Run `codegraph pr-patterns --owner ORG --repo REPO`.",
+        "themes": {},
+    }
+
+
+@mcp.tool()
 def codegraph_compress(
     focus_file: str | None = None,
     role: str = "general",

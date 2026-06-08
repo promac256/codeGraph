@@ -37,6 +37,9 @@ class ContextPack:
     # Tier 2 addition — session notes (if any exist)
     session_notes: list = field(default_factory=list)
 
+    # PR review patterns — populated by PRPatternMiner when available
+    pr_patterns: dict = field(default_factory=dict)
+
     # Focus / role context — populated by ContextCompressor, empty in default packs
     focus_context: dict = field(default_factory=dict)
 
@@ -101,6 +104,17 @@ class ContextPackGenerator:
 
         if remaining > 200:
             pack.todos = self.query.get_todos(limit=20)
+
+        # PR patterns — include top themes if stored and budget allows
+        if remaining > 400:
+            from codegraph.enrichment.pr_pattern_miner import PRPatternMiner
+            patterns = PRPatternMiner.load(self.store)
+            if patterns and patterns.get("themes"):
+                pack.pr_patterns = {
+                    "prs_analyzed": patterns.get("prs_analyzed", 0),
+                    "top_themes": list(patterns["themes"].keys())[:6],
+                }
+                remaining -= self._estimate_tokens(pack.pr_patterns)
 
         # Session notes — included when they exist and budget allows
         if self.notes_path and remaining > 300:

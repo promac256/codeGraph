@@ -644,6 +644,97 @@ def notes(
 
 
 # ---------------------------------------------------------------------------
+# pr-patterns
+# ---------------------------------------------------------------------------
+
+
+@app.command(name="pr-patterns")
+def pr_patterns(
+    repo: Path = typer.Argument(default=Path("."), help="Path to git repo"),
+    owner: str = typer.Option(..., "--owner", "-o", help="GitHub owner (user or org)"),
+    github_repo: str = typer.Option(..., "--repo", "-r", help="GitHub repo name"),
+    pr_limit: int = typer.Option(30, "--prs", help="Number of merged PRs to analyze"),
+    token: Optional[str] = typer.Option(None, "--token", help="GitHub token (or set GITHUB_TOKEN env)"),
+    show: bool = typer.Option(False, "--show", help="Display stored results instead of re-mining"),
+):
+    """Mine recurring review feedback themes from merged GitHub PRs.
+
+    Fetches the most recently merged PRs, collects review comments, and
+    identifies recurring feedback patterns (type hints, error handling, tests,
+    naming, complexity, etc.). Results are saved and shown in CLAUDE.md.
+
+    Examples:
+
+      codegraph pr-patterns --owner myorg --repo myproject --prs 50
+      codegraph pr-patterns --owner myorg --repo myproject --show
+    """
+    import os
+    from codegraph.config import Settings
+    from codegraph.enrichment.pr_pattern_miner import PRPatternMiner
+    from codegraph.graph.store import GraphStore
+
+    settings = Settings.from_repo(repo)
+    if not settings.db_path.exists():
+        console.print("[red]No graph found. Run `codegraph init` first.[/red]")
+        raise typer.Exit(1)
+
+    store = GraphStore(settings.db_path)
+    store.open()
+
+    if show:
+        data = PRPatternMiner.load(store)
+        if not data:
+            console.print("[yellow]No PR pattern data stored. Run without --show to mine.[/yellow]")
+        else:
+            _display_pr_patterns(data)
+        store.close()
+        return
+
+    gh_token = token or os.environ.get("GITHUB_TOKEN")
+    from codegraph.git.github_client import GitHubClient
+    client = GitHubClient(token=gh_token)
+    miner = PRPatternMiner(store, client, owner, github_repo)
+
+    console.print(f"[cyan]Mining[/cyan] {owner}/{github_repo} (last {pr_limit} merged PRs)…")
+    try:
+        result = miner.mine_and_save(pr_limit=pr_limit)
+    except Exception as exc:
+        console.print(f"[red]Failed:[/red] {exc}")
+        raise typer.Exit(1)
+    finally:
+        client.close()
+
+    _display_pr_patterns(result)
+    store.close()
+
+
+def _display_pr_patterns(data: dict) -> None:
+    console.print(
+        f"\n[bold]PR Pattern Analysis[/bold] — "
+        f"{data['prs_analyzed']} PRs · {data['total_comments']} comments\n"
+    )
+    themes = data.get("themes", {})
+    if not themes:
+        console.print("[dim]No recurring patterns found.[/dim]")
+        return
+
+    t = Table(title="Recurring Feedback Themes", show_lines=False)
+    t.add_column("Theme", style="cyan")
+    t.add_column("Count", justify="right")
+    t.add_column("Example")
+    for theme, info in list(themes.items())[:10]:
+        ex = (info["examples"][0] if info["examples"] else "")[:70]
+        t.add_row(theme.replace("_", " "), str(info["count"]), ex)
+    console.print(t)
+
+    reviewers = data.get("top_reviewers", [])
+    if reviewers:
+        console.print("\n[bold]Top Reviewers[/bold]")
+        for r in reviewers:
+            console.print(f"  {r['login']}: {r['comments']} comments")
+
+
+# ---------------------------------------------------------------------------
 
 
 def _run_enrichment(store, settings, progress_style: str = "spinner") -> None:
