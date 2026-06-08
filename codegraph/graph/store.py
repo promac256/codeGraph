@@ -61,9 +61,7 @@ CREATE TABLE IF NOT EXISTS config (
 CREATE VIRTUAL TABLE IF NOT EXISTS symbols_fts USING fts5(
     node_id UNINDEXED,
     name,
-    docstring,
-    content='nodes',
-    content_rowid='rowid'
+    docstring
 );
 CREATE INDEX IF NOT EXISTS idx_nodes_name ON nodes(name);
 CREATE INDEX IF NOT EXISTS idx_nodes_kind ON nodes(kind);
@@ -126,15 +124,17 @@ class GraphStore:
 
     def upsert_node(self, node: BaseNode) -> None:
         data = node.model_dump_json()
+        name = getattr(node, "name", None)
         self._db.execute(
             "INSERT OR REPLACE INTO nodes(node_id,kind,name,file,data) VALUES(?,?,?,?,?)",
-            (
-                node.node_id,
-                node.kind,
-                getattr(node, "name", None),
-                getattr(node, "file", None),
-                data,
-            ),
+            (node.node_id, node.kind, name, getattr(node, "file", None), data),
+        )
+        # Keep FTS index in sync (standalone, not a content table)
+        docstring = (getattr(node, "docstring", None) or "")[:500]
+        self._db.execute("DELETE FROM symbols_fts WHERE node_id=?", (node.node_id,))
+        self._db.execute(
+            "INSERT INTO symbols_fts(node_id, name, docstring) VALUES(?,?,?)",
+            (node.node_id, name or "", docstring),
         )
         self.graph.add_node(node.node_id, **node.model_dump())
 
@@ -155,6 +155,7 @@ class GraphStore:
         ids = [row[0] for row in cur]
         for nid in ids:
             self._db.execute("DELETE FROM nodes WHERE node_id=?", (nid,))
+            self._db.execute("DELETE FROM symbols_fts WHERE node_id=?", (nid,))
             if nid in self.graph:
                 self.graph.remove_node(nid)
         self._db.execute(

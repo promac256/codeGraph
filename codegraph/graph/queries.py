@@ -41,7 +41,10 @@ class GraphQuery:
             results = self.store.find_by_name_prefix(symbol_name, k, limit=10)
 
         if not results:
-            results = self.store.fts_search(symbol_name, limit=10)
+            fts = self.store.fts_search(symbol_name, limit=10)
+            if k:
+                fts = [r for r in fts if r.get("kind") == k]
+            results = fts
 
         return [self._to_location(r) for r in results]
 

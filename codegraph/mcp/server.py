@@ -333,6 +333,40 @@ def codegraph_add_session_note(note: str, category: str = "general") -> dict:
     return {"saved": True, "total_notes": mgr.note_count()}
 
 
+@mcp.tool()
+def codegraph_compress(
+    focus_file: str | None = None,
+    role: str = "general",
+    token_budget: int = 4000,
+) -> str:
+    """
+    Return a focused, role-aware CLAUDE.md context pack as markdown.
+
+    Use this when you need oriented context for a specific file or task,
+    rather than the full repo-wide pack from `graph://context-pack`.
+
+    Args:
+        focus_file:   Repo-relative path to the file you're working on
+                      (e.g. 'src/api/routes.py'). Lists its symbols,
+                      callers, imports, and imported-by first.
+        role:         'general' | 'debug' | 'review' | 'feature'.
+                      - debug:   ranks hot paths by complexity × churn
+                      - review:  alphabetical public API, more todos
+                      - feature: surfaces test modules, similar files
+        token_budget: Token cap for the generated pack (default 4000).
+    """
+    q = _get_query()
+    from codegraph.context.compressor import ContextCompressor
+    from codegraph.context.pack_generator import ContextPackGenerator
+
+    gen = ContextPackGenerator(q.store, q, token_budget)
+    pack = gen.generate()
+    compressor = ContextCompressor(q.store, q)
+    focused = compressor.compress(pack, focus_file=focus_file, role=role,
+                                  token_budget=token_budget)
+    return gen.to_markdown(focused)
+
+
 def run():
     mcp.run()
 
