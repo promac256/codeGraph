@@ -54,4 +54,11 @@ class ParserRegistry:
         except ImportError:
             pass
 
+        # Java
+        try:
+            from codegraph.parsers.java_parser import JavaParser
+            registry.register(JavaParser())
+        except ImportError:
+            pass
+
         return registry

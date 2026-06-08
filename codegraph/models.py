@@ -108,6 +108,7 @@ class TypeNode(BaseNode):
     line_start: int = 0
     definition: str = ""
     is_exported: bool = False
+    docstring: str | None = None
 
 
 class TestNode(BaseNode):

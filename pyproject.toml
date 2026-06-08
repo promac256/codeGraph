@@ -40,6 +40,9 @@ dev = [
 git = [
     "pygit2>=1.15",
 ]
+java = [
+    "tree-sitter-java>=0.23",
+]
 all-langs = [
     "tree-sitter-java>=0.23",
     "tree-sitter-c>=0.23",
