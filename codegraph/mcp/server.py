@@ -19,6 +19,7 @@ mcp = FastMCP(
 
 _graph_query = None
 _graph_store = None
+_settings = None
 
 
 def _resolve_symbol_id(q, name_or_id: str) -> str:
@@ -32,9 +33,11 @@ def _resolve_symbol_id(q, name_or_id: str) -> str:
     return name_or_id
 
 
-def _get_query():
-    global _graph_query, _graph_store
+_settings = None
 
+
+def _get_query():
+    global _graph_query, _graph_store, _settings  # noqa: PLW0603
     if _graph_query is not None:
         return _graph_query
 
@@ -43,13 +46,24 @@ def _get_query():
     from codegraph.graph.store import GraphStore
 
     repo_path = Path(os.environ.get("CODEGRAPH_REPO_PATH", ".")).resolve()
-    settings = Settings.from_repo(repo_path)
+    _settings = Settings.from_repo(repo_path)
 
-    _graph_store = GraphStore(settings.db_path)
+    _graph_store = GraphStore(_settings.db_path)
     _graph_store.open()
     _graph_store.load_graph_to_memory()
     _graph_query = GraphQuery(_graph_store)
     return _graph_query
+
+
+def _get_notes_manager():
+    from codegraph.config import Settings
+    from codegraph.context.session_notes import SessionNotesManager
+
+    if _settings is not None:
+        return SessionNotesManager(_settings.session_notes_path)
+    repo_path = Path(os.environ.get("CODEGRAPH_REPO_PATH", ".")).resolve()
+    settings = Settings.from_repo(repo_path)
+    return SessionNotesManager(settings.session_notes_path)
 
 
 @mcp.tool()
@@ -279,6 +293,44 @@ def get_summary() -> str:
         f"codegraph_hot_paths for core components, "
         f"codegraph_architectural_layers for structure overview."
     )
+
+
+@mcp.tool()
+def codegraph_get_session_notes(max_notes: int = 10) -> dict:
+    """
+    Read accumulated architectural session notes for this repository.
+
+    Session notes persist across coding sessions and record discoveries,
+    conventions, warnings, and architectural decisions. They are also
+    embedded in CLAUDE.md so new sessions inherit prior knowledge.
+
+    Args:
+        max_notes: Maximum number of recent notes to return (default 10).
+    """
+    mgr = _get_notes_manager()
+    notes = mgr.read_recent(max_notes=max_notes)
+    return {
+        "notes": notes,
+        "total": mgr.note_count(),
+        "tip": "Add notes via `codegraph notes --add` CLI or codegraph_add_session_note tool.",
+    }
+
+
+@mcp.tool()
+def codegraph_add_session_note(note: str, category: str = "general") -> dict:
+    """
+    Append an architectural discovery or note for this repository.
+
+    Notes are stored in .codegraph/session_notes.md and included in
+    future CLAUDE.md context packs so every new session inherits them.
+
+    Args:
+        note:     The note text (markdown supported).
+        category: One of: general, architecture, convention, warning, decision.
+    """
+    mgr = _get_notes_manager()
+    mgr.append(note, category=category)
+    return {"saved": True, "total_notes": mgr.note_count()}
 
 
 def run():

@@ -70,6 +70,17 @@ _TEMPLATE = """\
 - **{{ t.kind }}** `{{ t.file }}:{{ t.line }}` — {{ t.text | truncate(100) }}
 {% endfor %}
 
+{% if pack.session_notes %}
+## Session Notes ({{ pack.session_notes | length }} most recent)
+
+{% for n in pack.session_notes %}
+**{{ n.timestamp }}** · *{{ n.category }}*
+
+{{ n.note | truncate(300) }}
+
+{% endfor %}
+{% endif %}
+
 ---
 
 *Query the full graph: `codegraph query <symbol>` or via MCP tool `codegraph_find_symbol`.*

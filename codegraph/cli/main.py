@@ -582,6 +582,59 @@ def watch(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+# notes
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def notes(
+    repo: Path = typer.Argument(default=Path("."), help="Path to git repo"),
+    add: Optional[str] = typer.Option(None, "--add", "-a", help="Append a new note"),
+    category: str = typer.Option("general", "--category", "-c", help="Note category"),
+    clear: bool = typer.Option(False, "--clear", help="Delete all notes"),
+    count: int = typer.Option(20, "--count", "-n", help="Max notes to display"),
+):
+    """Show, add, or clear architectural session notes.
+
+    Session notes persist across coding sessions and are included in
+    CLAUDE.md so new sessions inherit prior discoveries.
+
+    Examples:
+
+      codegraph notes                         # show recent notes
+      codegraph notes --add "GraphBuilder uses two-pass build" --category architecture
+      codegraph notes --clear                 # wipe all notes
+    """
+    from codegraph.config import Settings
+    from codegraph.context.session_notes import SessionNotesManager
+
+    settings = Settings.from_repo(repo)
+    mgr = SessionNotesManager(settings.session_notes_path)
+
+    if clear:
+        mgr.clear()
+        console.print("[green]Session notes cleared.[/green]")
+        return
+
+    if add:
+        mgr.append(add.strip(), category=category)
+        console.print(f"[green]Note added[/green] [{category}]: {add[:80]}")
+        return
+
+    # Display
+    recent = mgr.read_recent(max_notes=count)
+    if not recent:
+        console.print("[dim]No session notes yet.[/dim]")
+        console.print(f"Add one: codegraph notes --add \"Your discovery here\"")
+        return
+
+    console.print(f"[bold]Session Notes[/bold] ({len(recent)} shown)\n")
+    for n in recent:
+        console.print(f"[bold cyan]{n['timestamp']}[/bold cyan] · [italic]{n['category']}[/italic]")
+        console.print(f"{n['note']}\n")
+
+
+# ---------------------------------------------------------------------------
 
 
 def _run_enrichment(store, settings, progress_style: str = "spinner") -> None:
@@ -620,7 +673,7 @@ def _generate_pack(store, settings, token_budget: int = 8000) -> None:
     from codegraph.graph.queries import GraphQuery
 
     q = GraphQuery(store)
-    gen = ContextPackGenerator(store, q, token_budget)
+    gen = ContextPackGenerator(store, q, token_budget, notes_path=settings.session_notes_path)
     cp = gen.generate()
 
     claude_md = settings.repo_path / "CLAUDE.md"

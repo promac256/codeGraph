@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from codegraph.graph.queries import GraphQuery
     from codegraph.graph.store import GraphStore
 
@@ -32,6 +34,9 @@ class ContextPack:
     key_classes: list = field(default_factory=list)
     todos: list = field(default_factory=list)
 
+    # Tier 2 addition — session notes (if any exist)
+    session_notes: list = field(default_factory=list)
+
     # Tier 3 — index only (queried on demand via MCP)
     symbol_count: int = 0
     file_count: int = 0
@@ -54,10 +59,12 @@ class ContextPackGenerator:
         store: "GraphStore",
         query: "GraphQuery",
         token_budget: int = DEFAULT_TOKEN_BUDGET,
+        notes_path: "Path | None" = None,
     ):
         self.store = store
         self.query = query
         self.token_budget = token_budget
+        self.notes_path = notes_path
 
     def generate(self) -> ContextPack:
         repo_name = self.store.get_config("repo_name", "unknown")
@@ -91,6 +98,13 @@ class ContextPackGenerator:
 
         if remaining > 200:
             pack.todos = self.query.get_todos(limit=20)
+
+        # Session notes — included when they exist and budget allows
+        if self.notes_path and remaining > 300:
+            from codegraph.context.session_notes import SessionNotesManager
+            mgr = SessionNotesManager(self.notes_path)
+            if mgr.exists():
+                pack.session_notes = mgr.read_recent(max_notes=8)
 
         # Tier 3
         from codegraph.models import NodeKind
