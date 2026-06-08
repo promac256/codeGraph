@@ -143,6 +143,95 @@ def update(
 
 
 # ---------------------------------------------------------------------------
+# diff
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def diff(
+    sha1: str = typer.Argument(help="Base ref (commit SHA, branch, or tag)"),
+    sha2: str = typer.Argument(default="HEAD", help="Target ref (default: HEAD)"),
+    repo: Path = typer.Option(Path("."), "--repo", help="Repo path"),
+    no_blast: bool = typer.Option(False, "--no-blast", help="Skip blast radius analysis"),
+):
+    """Show symbol-level changes between two git refs.
+
+    Compares functions, classes, and types changed between SHA1 and SHA2,
+    then queries the graph for callers of every removed or modified symbol.
+
+    Example: codegraph diff main HEAD
+    """
+    from codegraph.config import Settings
+    from codegraph.git.local_repo import LocalRepo
+    from codegraph.graph.differ import GraphDiffer
+    from codegraph.graph.store import GraphStore
+    from codegraph.parsers.registry import ParserRegistry
+
+    settings = Settings.from_repo(repo)
+    repo_path = repo.resolve()
+
+    # Resolve refs
+    git = LocalRepo(repo_path)
+    resolved1 = git.resolve_ref(sha1)
+    resolved2 = git.resolve_ref(sha2)
+    if not resolved1:
+        console.print(f"[red]Cannot resolve ref: {sha1}[/red]")
+        raise typer.Exit(1)
+    if not resolved2:
+        console.print(f"[red]Cannot resolve ref: {sha2}[/red]")
+        raise typer.Exit(1)
+
+    # Load graph for blast radius (optional)
+    store = None
+    if not no_blast and settings.db_path.exists():
+        store = GraphStore(settings.db_path)
+        store.open()
+        store.load_graph_to_memory()
+
+    registry = ParserRegistry.default()
+    differ = GraphDiffer(repo_path, registry, store=store)
+
+    short1 = resolved1[:8]
+    short2 = resolved2[:8]
+    console.print(f"[bold]codeGraph diff[/bold]  {short1} → {short2}\n")
+
+    result = differ.diff(resolved1, resolved2)
+
+    if not result.file_diffs and not any(result.all_changes):
+        console.print("[dim]No symbol-level changes detected.[/dim]")
+        if store:
+            store.close()
+        return
+
+    _ICONS = {"added": "[green]+[/green]", "removed": "[red]-[/red]", "modified": "[yellow]~[/yellow]"}
+    _STATUS = {"A": "[green]NEW[/green]", "M": "[yellow]MOD[/yellow]", "D": "[red]DEL[/red]"}
+
+    for fd in result.file_diffs:
+        status_label = _STATUS.get(fd.status, fd.status)
+        console.print(f"  {status_label}  [bold]{fd.path}[/bold]")
+        for ch in fd.changes:
+            icon = _ICONS.get(ch.change_type, " ")
+            detail = f"  [dim]{ch.detail}[/dim]" if ch.detail else ""
+            console.print(f"        {icon} [{ch.kind}] {ch.qualified_name}{detail}")
+        console.print()
+
+    summary = result.summary
+    console.print(
+        f"  Summary: [green]+{summary['added']} added[/green]  "
+        f"[red]-{summary['removed']} removed[/red]  "
+        f"[yellow]~{summary['modified']} modified[/yellow]"
+    )
+
+    if result.blast_radius:
+        console.print("\n[bold]Blast radius[/bold] (existing callers of changed symbols):")
+        for sym, callers in result.blast_radius.items():
+            console.print(f"  [yellow]{sym}[/yellow] ← {', '.join(callers[:8])}")
+
+    if store:
+        store.close()
+
+
+# ---------------------------------------------------------------------------
 # enrich
 # ---------------------------------------------------------------------------
 

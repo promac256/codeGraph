@@ -32,6 +32,55 @@ class LocalRepo:
         except subprocess.CalledProcessError:
             return []
 
+    def get_changed_files_between(self, sha1: str, sha2: str) -> list[dict]:
+        """Return list of {path, status} for files changed between sha1 and sha2."""
+        try:
+            result = subprocess.run(
+                ["git", "diff", "--name-status", sha1, sha2],
+                cwd=self.root,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            changed = []
+            for line in result.stdout.splitlines():
+                parts = line.split("\t")
+                if len(parts) >= 2:
+                    raw_status = parts[0].strip()
+                    # Renames have format "R\told\tnew"; use new path
+                    path = parts[-1].strip()
+                    changed.append({"status": raw_status[0], "path": path})
+            return changed
+        except subprocess.CalledProcessError:
+            return []
+
+    def get_file_at_sha(self, sha: str, path: str) -> bytes | None:
+        """Return the raw bytes of a file at a given commit SHA. None if missing."""
+        try:
+            result = subprocess.run(
+                ["git", "show", f"{sha}:{path}"],
+                cwd=self.root,
+                capture_output=True,
+                check=True,
+            )
+            return result.stdout
+        except subprocess.CalledProcessError:
+            return None
+
+    def resolve_ref(self, ref: str) -> str | None:
+        """Resolve a branch name / tag / short SHA to a full SHA."""
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "--verify", ref],
+                cwd=self.root,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            return result.stdout.strip()
+        except subprocess.CalledProcessError:
+            return None
+
     def get_commits_since(self, since_sha: str | None, limit: int = 50) -> list[dict]:
         """Return recent commits as dicts, newest first."""
         try:
@@ -89,3 +138,4 @@ class LocalRepo:
             return result.stdout.strip()
         except subprocess.CalledProcessError:
             return None
+
