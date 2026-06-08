@@ -66,9 +66,9 @@ export class GraphWebviewPanel {
     }
 
     try {
-      const [layers, hotPaths] = await Promise.all([
-        this._client.call<Record<string, string[]>>('codegraph_architectural_layers', {}),
-        this._client.call<Array<Record<string, unknown>>>('codegraph_hot_paths', { top_n: 100 }),
+      const [layersResult, hotPathsResult] = await Promise.all([
+        this._client.call<{ layers: Record<string, string[]> } | Record<string, string[]>>('codegraph_architectural_layers', {}),
+        this._client.call<{ hot_paths: Array<Record<string, unknown>> } | Array<Record<string, unknown>>>('codegraph_hot_paths', { top_n: 100 }),
       ]);
 
       // Build Cytoscape graph data from layers + hot paths
@@ -76,11 +76,17 @@ export class GraphWebviewPanel {
       const edges: CyEdge[] = [];
       const nodeSet = new Set<string>();
 
+      // Unwrap server response: may be {layers:{...}} or plain {...}
+      const layersRaw = (layersResult as { layers?: Record<string, string[]> }).layers ?? layersResult as Record<string, string[]>;
+      const hotPaths = Array.isArray(hotPathsResult)
+        ? hotPathsResult
+        : ((hotPathsResult as { hot_paths?: Array<Record<string, unknown>> }).hot_paths ?? []);
+
       // Normalise: server returns paths without 'file:' prefix; we store them with it
       // so that IDs match what hotPaths returns in the 'file' field.
       const layerMap: Record<string, string[]> = {};
-      for (const [layer, files] of Object.entries(layers as Record<string, string[]>)) {
-        layerMap[layer] = files.map((f) => (f.startsWith('file:') ? f : `file:${f}`));
+      for (const [layer, files] of Object.entries(layersRaw)) {
+        layerMap[layer] = (files as string[]).map((f) => (f.startsWith('file:') ? f : `file:${f}`));
       }
 
       for (const [layer, fileIds] of Object.entries(layerMap)) {
@@ -95,7 +101,7 @@ export class GraphWebviewPanel {
       }
 
       // Overlay hot path functions on top
-      for (const hp of (hotPaths as Array<Record<string, unknown>>).slice(0, 80)) {
+      for (const hp of hotPaths.slice(0, 80)) {
         const id = hp['node_id'] as string;
         if (!nodeSet.has(id)) {
           const rawFile = hp['file'] as string;

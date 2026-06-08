@@ -57,12 +57,13 @@ async function _processDiagnostics(
     const firstWord = errorMessage.split(/[\s:(']+/)[0];
 
     // Try to find the symbol at the error line via search
-    const searchResult = await client.call<Array<Record<string, unknown>>>(
-      'codegraph_search',
-      { query: firstWord, limit: 5 },
-    );
+    const searchResult = await client.call<
+      { results?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>
+    >('codegraph_search', { query: firstWord, limit: 5 });
 
-    const symbolList = Array.isArray(searchResult) ? searchResult : [];
+    const symbolList = Array.isArray(searchResult)
+      ? searchResult
+      : ((searchResult as { results?: Array<Record<string, unknown>> }).results ?? []);
 
     // Find the symbol in this file
     const inFile = symbolList.find((s) => {

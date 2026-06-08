@@ -30,7 +30,7 @@ export function registerChatParticipant(
         switch (cmd) {
           case 'symbol': {
             const name = prompt || 'unknown';
-            const result = await safeCall(client, 'codegraph_find_symbol', { symbol_name: name, kind: 'any' });
+            const result = await safeCall(client, 'codegraph_find_symbol', { name, kind: 'any' });
             stream.markdown(md(`**Definition of \`${name}\`**\n\n\`\`\`json\n${JSON.stringify(result, null, 2)}\n\`\`\``));
             break;
           }
@@ -57,8 +57,8 @@ export function registerChatParticipant(
           }
 
           case 'hotspots': {
-            const result = await safeCall(client, 'codegraph_hot_paths', { top_n: 20 }) as Array<Record<string, unknown>>;
-            const rows = Array.isArray(result) ? result : [];
+            const result = await safeCall(client, 'codegraph_hot_paths', { top_n: 20 }) as { hot_paths?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>;
+            const rows = Array.isArray(result) ? result : ((result as { hot_paths?: Array<Record<string, unknown>> }).hot_paths ?? []);
             let table = '**Hot Paths (PageRank × Commit Frequency)**\n\n| # | Name | Kind | File | Commits |\n|---|------|------|------|---------|\n';
             rows.forEach((r, i) => {
               const file = String(r['file'] || '').replace('file:', '');

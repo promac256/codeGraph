@@ -72,7 +72,7 @@ export class McpClient {
     }
 
     if (pref === 'stdio') {
-      this._startStdio();
+      await this._startStdio();
       return;
     }
 
@@ -81,7 +81,7 @@ export class McpClient {
       await this._probeSse(this.ssePort, 2000);
       await this._connectSse(this.ssePort);
     } catch {
-      this._startStdio();
+      await this._startStdio();
     }
   }
 
@@ -267,49 +267,82 @@ export class McpClient {
   // stdio transport
   // ---------------------------------------------------------------------------
 
-  private _startStdio(): void {
-    const config = vscode.workspace.getConfiguration('codegraph');
-    const pythonPath = config.get<string>('pythonPath') ?? '';
-    const cmd = pythonPath
-      ? path.join(path.dirname(pythonPath), 'codegraph')
-      : 'codegraph';
+  private _startStdio(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const config = vscode.workspace.getConfiguration('codegraph');
+      const pythonPath = config.get<string>('pythonPath') ?? '';
+      const cmd = pythonPath
+        ? path.join(path.dirname(pythonPath), 'codegraph')
+        : 'codegraph';
 
-    this.proc = spawn(cmd, ['serve', '--transport', 'stdio'], {
-      cwd: this.repoPath,
-      env: { ...process.env, CODEGRAPH_REPO_PATH: this.repoPath },
-      stdio: ['pipe', 'pipe', 'pipe'],
+      const proc = spawn(cmd, ['serve', '--transport', 'stdio'], {
+        cwd: this.repoPath,
+        env: { ...process.env, CODEGRAPH_REPO_PATH: this.repoPath },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+
+      this.proc = proc;
+
+      proc.stdout!.setEncoding('utf8');
+      proc.stdout!.on('data', (chunk: string) => {
+        this.stdioBuf += chunk;
+        const lines = this.stdioBuf.split('\n');
+        this.stdioBuf = lines.pop()!;
+        for (const line of lines) {
+          if (line.trim()) this._handleJsonRpc(line);
+        }
+      });
+
+      proc.stderr!.on('data', () => { /* swallow FastMCP startup logs */ });
+
+      proc.on('error', (err) => {
+        reject(new Error(`Failed to start codegraph: ${err.message}`));
+      });
+
+      proc.on('exit', () => {
+        this._ready = false;
+        this._rejectAllPending('stdio subprocess exited');
+      });
+
+      // MCP initialization handshake — required before tools/call
+      const initId = ++this.nextId;
+      const initTimer = setTimeout(() => {
+        // Server did not respond to initialize in time; mark ready anyway
+        // so the user sees a degraded-mode warning rather than a hard failure
+        if (this.pending.has(initId)) {
+          this.pending.delete(initId);
+          this.activeTransport = 'stdio';
+          this._ready = true;
+          resolve();
+        }
+      }, 8000);
+
+      this.pending.set(initId, {
+        resolve: () => {
+          clearTimeout(initTimer);
+          proc.stdin!.write(
+            JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} }) + '\n',
+          );
+          this.activeTransport = 'stdio';
+          this._ready = true;
+          resolve();
+        },
+        reject: (e) => { clearTimeout(initTimer); reject(e); },
+      });
+
+      proc.stdin!.write(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: initId,
+          method: 'initialize',
+          params: {
+            protocolVersion: '2024-11-05',
+            capabilities: {},
+            clientInfo: { name: 'codegraph-vscode', version: '0.1.0' },
+          },
+        }) + '\n',
+      );
     });
-
-    this.proc.stdout!.setEncoding('utf8');
-    this.proc.stdout!.on('data', (chunk: string) => {
-      this.stdioBuf += chunk;
-      const lines = this.stdioBuf.split('\n');
-      this.stdioBuf = lines.pop()!;
-      for (const line of lines) {
-        if (line.trim()) this._handleJsonRpc(line);
-      }
-    });
-
-    this.proc.stderr!.on('data', (chunk: Buffer) => {
-      const text = chunk.toString();
-      if (!this._ready && (text.includes('starting') || text.includes('MCP') || text.includes('stdio'))) {
-        this.activeTransport = 'stdio';
-        this._ready = true;
-      }
-    });
-
-    this.proc.on('exit', () => {
-      this._ready = false;
-      this._rejectAllPending('stdio subprocess exited');
-    });
-
-    // Stdio servers are ready almost immediately; mark ready after brief startup window
-    setTimeout(() => {
-      if (!this._ready && this.proc && !this.proc.killed) {
-        this.activeTransport = 'stdio';
-        this._ready = true;
-      }
-    }, 1500);
   }
 
   private _sendStdio(payload: object): Promise<void> {
@@ -336,10 +369,19 @@ export class McpClient {
       if (!handler) return;
       this.pending.delete(msg.id);
       if (msg.error) handler.reject(new Error(msg.error.message ?? 'MCP error'));
-      else handler.resolve(msg.result);
+      else handler.resolve(this._unwrapResult(msg.result));
     } catch {
       // unparseable line — ignore
     }
+  }
+
+  /** Extract actual tool data from MCP tools/call response envelope. */
+  private _unwrapResult(result: unknown): unknown {
+    const r = result as { content?: Array<{ type: string; text: string }>; isError?: boolean } | null;
+    if (r?.content?.[0]?.type === 'text' && r.content[0].text) {
+      try { return JSON.parse(r.content[0].text); } catch { return r.content[0].text; }
+    }
+    return result;
   }
 
   private _rejectAllPending(reason: string): void {
