@@ -37,6 +37,9 @@ class ContextPack:
     # Tier 2 addition — session notes (if any exist)
     session_notes: list = field(default_factory=list)
 
+    # Focus / role context — populated by ContextCompressor, empty in default packs
+    focus_context: dict = field(default_factory=dict)
+
     # Tier 3 — index only (queried on demand via MCP)
     symbol_count: int = 0
     file_count: int = 0

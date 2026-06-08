@@ -81,6 +81,31 @@ _TEMPLATE = """\
 {% endfor %}
 {% endif %}
 
+{% if pack.focus_context %}
+## Focus: `{{ pack.focus_context.file }}`
+
+{% if pack.focus_context.symbols %}
+### Symbols defined here
+
+| Line | Kind | Name | Complexity | Signature |
+|------|------|------|------------|-----------|
+{% for s in pack.focus_context.symbols %}| {{ s.line_start }} | {{ s.kind }} | `{{ s.qualified_name or s.name }}` | {{ s.complexity }} | `{{ s.signature | truncate(60) }}` |
+{% endfor %}
+{% endif %}
+{% if pack.focus_context.imports %}
+**Imports**: {{ pack.focus_context.imports | map('string') | join(', ') }}
+{% endif %}
+{% if pack.focus_context.imported_by %}
+**Imported by**: {{ pack.focus_context.imported_by | map('string') | join(', ') }}
+{% endif %}
+{% if pack.focus_context.callers %}
+**External callers**: {{ pack.focus_context.callers | join(', ') | truncate(200) }}
+{% endif %}
+{% if pack.focus_context.similar_files %}
+**Similar files (same layer)**: {{ pack.focus_context.similar_files | join(', ') | truncate(200) }}
+{% endif %}
+{% endif %}
+
 ---
 
 *Query the full graph: `codegraph query <symbol>` or via MCP tool `codegraph_find_symbol`.*

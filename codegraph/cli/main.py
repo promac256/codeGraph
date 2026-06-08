@@ -375,9 +375,12 @@ def pack(
     token_budget: int = typer.Option(8000, "--token-budget"),
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output path"),
     format: str = typer.Option("markdown", "--format", "-f", help="markdown|json|html|all"),
+    focus: Optional[str] = typer.Option(None, "--focus", help="Focus file path for compressed output"),
+    role: str = typer.Option("general", "--role", "-r", help="general|debug|review|feature"),
 ):
     """Generate a compressed context pack for LLM session start."""
     from codegraph.config import Settings
+    from codegraph.context.compressor import ContextCompressor
     from codegraph.context.pack_generator import ContextPackGenerator
     from codegraph.graph.queries import GraphQuery
     from codegraph.graph.store import GraphStore
@@ -391,8 +394,14 @@ def pack(
     store.open()
     store.load_graph_to_memory()
     q = GraphQuery(store)
-    gen = ContextPackGenerator(store, q, token_budget)
+    gen = ContextPackGenerator(store, q, token_budget, notes_path=settings.session_notes_path)
     cp = gen.generate()
+
+    if focus or role != "general":
+        compressor = ContextCompressor(store, q)
+        cp = compressor.compress(cp, focus_file=focus, role=role)
+        if focus:
+            console.print(f"[cyan]Focus:[/cyan] {focus}  [cyan]Role:[/cyan] {role}")
 
     fmt = format.lower()
     if fmt in ("markdown", "all"):
