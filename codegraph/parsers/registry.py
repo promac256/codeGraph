@@ -61,4 +61,11 @@ class ParserRegistry:
         except ImportError:
             pass
 
+        # C / C++
+        try:
+            from codegraph.parsers.c_parser import CParser
+            registry.register(CParser())
+        except ImportError:
+            pass
+
         return registry
