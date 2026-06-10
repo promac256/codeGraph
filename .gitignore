@@ -22,7 +22,6 @@ htmlcov/
 .codegraph/
 
 # Generated outputs
-CLAUDE.md
 codegraph-report.html
 
 # Env
