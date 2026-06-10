@@ -1,0 +1,64 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "codegraph"
+version = "0.1.0"
+description = "Knowledge graph for LLM coding assistants — instant codebase orientation at session start"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "tree-sitter>=0.25.0",
+    "tree-sitter-python>=0.25.0",
+    "tree-sitter-javascript>=0.25.0",
+    "tree-sitter-typescript>=0.23.0",
+    "tree-sitter-go>=0.23",
+    "tree-sitter-rust>=0.23",
+    "networkx>=3.4",
+    "httpx>=0.27",
+    "anthropic>=0.40",
+    "fastmcp>=2.0",
+    "typer>=0.12",
+    "rich>=13.0",
+    "pydantic>=2.10",
+    "pydantic-settings>=2.6",
+    "diskcache>=5.6",
+    "orjson>=3.10",
+    "jinja2>=3.1",
+    "toml>=0.10",
+    "watchdog>=4.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=5.0",
+]
+git = [
+    "pygit2>=1.15",
+]
+java = [
+    "tree-sitter-java>=0.23",
+]
+all-langs = [
+    "tree-sitter-java>=0.23",
+    "tree-sitter-c>=0.23",
+    "tree-sitter-cpp>=0.23",
+]
+
+[project.scripts]
+codegraph = "codegraph.cli.main:app"
+codegraph-mcp = "codegraph.mcp.server:run"
+
+[tool.hatch.build.targets.wheel]
+packages = ["codegraph"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.hatch.metadata]
+allow-direct-references = true
