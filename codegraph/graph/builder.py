@@ -35,6 +35,46 @@ SKIP_EXTENSIONS = frozenset({
 MAX_FILE_SIZE = 512 * 1024  # 512 KB
 
 
+def _pagerank_power_iteration(
+    edges: list[tuple[str, str]],
+    alpha: float = 0.85,
+    max_iter: int = 100,
+    tol: float = 1.0e-6,
+) -> dict[str, float]:
+    """Pure-Python PageRank via power iteration.
+
+    NetworkX's ``pagerank`` requires scipy; this fallback keeps hot-path
+    ranking working when scipy is not installed. Handles dangling nodes by
+    redistributing their rank uniformly. Returns {node_id: score}.
+    """
+    out_links: dict[str, list[str]] = {}
+    nodes: set[str] = set()
+    for src, dst in edges:
+        out_links.setdefault(src, []).append(dst)
+        nodes.add(src)
+        nodes.add(dst)
+
+    n = len(nodes)
+    if n == 0:
+        return {}
+
+    rank = {node: 1.0 / n for node in nodes}
+    dangling = [node for node in nodes if node not in out_links]
+    base = (1.0 - alpha) / n
+
+    for _ in range(max_iter):
+        prev = rank
+        dangling_mass = alpha * sum(prev[node] for node in dangling) / n
+        rank = {node: base + dangling_mass for node in nodes}
+        for src, dsts in out_links.items():
+            share = alpha * prev[src] / len(dsts)
+            for dst in dsts:
+                rank[dst] += share
+        if sum(abs(rank[node] - prev[node]) for node in nodes) < tol:
+            break
+    return rank
+
+
 class GraphBuilder:
     """Builds the complete knowledge graph from scratch."""
 
@@ -89,6 +129,7 @@ class GraphBuilder:
 
         self._resolve_cross_file_references()
         self._compute_derived_metrics()
+        stats["commits"] = self._ingest_git_history()
 
         stats["nodes"] = self.store.graph.number_of_nodes()
         stats["edges"] = self.store.graph.number_of_edges()
@@ -208,20 +249,44 @@ class GraphBuilder:
         self.store._db.commit()
 
     def _compute_derived_metrics(self) -> None:
-        """Compute PageRank on call graph for hot-path ranking."""
+        """Compute PageRank for hot-path ranking.
+
+        Prefers the call graph, but parsers do not yet emit ``calls`` edges
+        for every language (Python, the bulk of most repos, emits none). When
+        the call graph is empty we fall back to the structural dependency
+        graph so ranking still reflects real centrality instead of leaving
+        every node at PageRank 0 (which made hot-paths arbitrary dict order).
+        """
         G = self.store.graph
 
-        call_edges = [
+        rank_edges = [
             (s, d)
             for s, d, k in G.edges(keys=True)
             if k == EdgeKind.CALLS
         ]
-        if not call_edges:
+        if not rank_edges:
+            structural = (
+                EdgeKind.IMPORTS,
+                EdgeKind.INHERITS,
+                EdgeKind.IMPLEMENTS,
+                EdgeKind.DEFINES,
+            )
+            rank_edges = [
+                (s, d)
+                for s, d, k in G.edges(keys=True)
+                if k in structural
+            ]
+        if not rank_edges:
             return
 
-        call_subgraph = nx.DiGraph(call_edges)
+        rank_graph = nx.DiGraph(rank_edges)
         try:
-            pr = nx.pagerank(call_subgraph, alpha=0.85)
+            # NetworkX delegates pagerank to scipy; fall back to a
+            # dependency-free power iteration when scipy is absent rather
+            # than silently leaving every node at PageRank 0.
+            pr = nx.pagerank(rank_graph, alpha=0.85)
+        except ImportError:
+            pr = _pagerank_power_iteration(rank_edges, alpha=0.85)
         except Exception:
             return
 
@@ -237,3 +302,70 @@ class GraphBuilder:
                 updates,
             )
             self.store._db.commit()
+
+    def _ingest_git_history(self, max_commits: int = 1000) -> int:
+        """Walk git history to populate commit rows, MODIFIES edges, and the
+        per-file ``commit_count`` churn signal used by hot-path ranking.
+
+        A fresh ``init`` previously never touched git (only ``update`` did),
+        so every node scored 0 commits and the churn half of the hot-path
+        score was always empty. Also seeds ``last_indexed_sha`` so the first
+        subsequent ``update`` diffs from HEAD rather than re-walking from the
+        repo root. Returns the number of commits ingested.
+        """
+        import collections
+
+        import orjson
+
+        from codegraph.git.local_repo import LocalRepo
+        from codegraph.models import EdgeKind, GraphEdge
+
+        repo = LocalRepo(self.repo_root)
+        commits = repo.get_commits_since(None, limit=max_commits)
+        if not commits:
+            return 0
+
+        G = self.store.graph
+        counts: collections.Counter = collections.Counter()
+        for c in commits:
+            self.store._db.execute(
+                "INSERT OR REPLACE INTO commits(sha,author,ts,message,data) "
+                "VALUES(?,?,?,?,?)",
+                (
+                    c["sha"],
+                    c.get("author", ""),
+                    c.get("timestamp", 0),
+                    c.get("message", ""),
+                    orjson.dumps(c).decode(),
+                ),
+            )
+            commit_id = f"commit:{c['sha']}"
+            for file_path in c.get("files_changed", []):
+                file_id = f"file:{file_path}"
+                if file_id not in G.nodes:
+                    continue  # file deleted since, or not a parsed source file
+                self.store._db.execute(
+                    "INSERT OR IGNORE INTO file_commits(file,sha) VALUES(?,?)",
+                    (file_id, c["sha"]),
+                )
+                self.store.upsert_edge(
+                    GraphEdge(
+                        src=commit_id,
+                        dst=file_id,
+                        kind=EdgeKind.MODIFIES,
+                        meta={},
+                    )
+                )
+                counts[file_id] += 1
+
+        for file_id, n in counts.items():
+            G.nodes[file_id]["commit_count"] = n
+        if counts:
+            self.store._db.executemany(
+                "UPDATE nodes SET data=json_set(data,'$.commit_count',?) "
+                "WHERE node_id=?",
+                [(n, fid) for fid, n in counts.items()],
+            )
+        self.store.set_config("last_indexed_sha", commits[0]["sha"])
+        self.store._db.commit()
+        return len(commits)

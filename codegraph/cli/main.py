@@ -84,6 +84,7 @@ def init(
     console.print(f"  Files skipped: {stats['files_skipped']}")
     console.print(f"  Nodes:         {stats['nodes']}")
     console.print(f"  Edges:         {stats['edges']}")
+    console.print(f"  Commits:       {stats.get('commits', 0)}")
     if stats["errors"]:
         console.print(f"  [yellow]Errors:        {stats['errors']}[/yellow]")
 
