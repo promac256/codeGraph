@@ -135,6 +135,7 @@ class GoParser(LanguageParser):
             self._extract_functions(root, file_id, rel, source, result)
             self._extract_methods(root, file_id, rel, source, result)
             self._extract_imports(root, file_id, rel, source, result)
+            self._extract_calls(root, result)
         except Exception as e:
             result.errors.append(f"tree-sitter parse error: {e}")
 
@@ -372,6 +373,33 @@ class GoParser(LanguageParser):
                         meta={"module": raw},
                     )
                 )
+
+    # ------------------------------------------------------------------
+    # Calls
+    # ------------------------------------------------------------------
+
+    def _extract_calls(self, root, result: ParseResult) -> None:
+        if not result.functions:
+            return
+        sites = []
+        for call in _iter_type(root, "call_expression"):
+            fn = call.child_by_field_name("function")
+            if fn is None:
+                continue
+            name = self._callee_name(fn)
+            if name:
+                sites.append((name, call.start_point[0] + 1))
+        self._emit_call_edges(sites, result)
+
+    def _callee_name(self, fn) -> str | None:
+        # foo() -> foo ; pkg.Foo() / x.Method() -> Foo / Method
+        if fn.type == "identifier":
+            return fn.text.decode("utf-8", errors="replace")
+        if fn.type == "selector_expression":
+            field = fn.child_by_field_name("field")
+            if field is not None:
+                return field.text.decode("utf-8", errors="replace")
+        return None
 
 
 # ------------------------------------------------------------------

@@ -88,6 +88,7 @@ class TypeScriptParser(LanguageParser):
             if is_ts:
                 self._extract_interfaces(tree.root_node, file_id, rel, result)
                 self._extract_type_aliases(tree.root_node, file_id, rel, result)
+            self._extract_calls(tree.root_node, result)
         except Exception as e:
             result.errors.append(f"tree-sitter parse error: {e}")
 
@@ -254,6 +255,29 @@ class TypeScriptParser(LanguageParser):
             if m:
                 todos.append({"line": i, "kind": m.group(1).upper(), "text": m.group(2).strip()})
         return todos
+
+    def _extract_calls(self, root, result: ParseResult) -> None:
+        if not result.functions:
+            return
+        sites = []
+        for call in self._iter_type(root, "call_expression"):
+            fn = call.child_by_field_name("function")
+            if fn is None:
+                continue
+            name = self._callee_name(fn)
+            if name:
+                sites.append((name, call.start_point[0] + 1))
+        self._emit_call_edges(sites, result)
+
+    def _callee_name(self, fn) -> str | None:
+        # foo() -> foo ; obj.method() / this.method() -> method
+        if fn.type == "identifier":
+            return fn.text.decode("utf-8", errors="replace")
+        if fn.type == "member_expression":
+            prop = fn.child_by_field_name("property")
+            if prop is not None:
+                return prop.text.decode("utf-8", errors="replace")
+        return None
 
     def _iter_type(self, node, node_type: str):
         if node.type == node_type:

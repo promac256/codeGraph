@@ -223,6 +223,7 @@ class CParser(LanguageParser):
             self._walk_declarations(root, file_id, rel, source, lines, result,
                                     namespace_prefix="")
             self._extract_includes(root, file_id, rel, source, result)
+            self._extract_calls(root, result)
         except Exception as e:
             result.errors.append(f"tree-sitter parse error: {e}")
 
@@ -521,3 +522,37 @@ class CParser(LanguageParser):
                         meta={"module": module, "is_relative": is_relative},
                     )
                 )
+
+    # ------------------------------------------------------------------
+    # Calls
+    # ------------------------------------------------------------------
+
+    def _extract_calls(self, root, result: ParseResult) -> None:
+        if not result.functions:
+            return
+        sites = []
+        for call in _iter_type(root, "call_expression"):
+            fn = call.child_by_field_name("function")
+            if fn is None:
+                continue
+            name = self._callee_name(fn)
+            if name:
+                sites.append((name, call.start_point[0] + 1))
+        self._emit_call_edges(sites, result)
+
+    def _callee_name(self, fn) -> str | None:
+        # foo() -> foo ; obj.m()/obj->m() -> m ; ns::foo() -> foo
+        t = fn.type
+        if t == "identifier":
+            return fn.text.decode("utf-8", errors="replace")
+        if t == "field_expression":
+            field = fn.child_by_field_name("field")
+            if field is not None:
+                return field.text.decode("utf-8", errors="replace")
+        if t == "qualified_identifier":
+            name = fn.child_by_field_name("name")
+            if name is not None:
+                if name.type == "qualified_identifier":
+                    return self._callee_name(name)
+                return name.text.decode("utf-8", errors="replace")
+        return None

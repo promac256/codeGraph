@@ -9,6 +9,10 @@ zero, which previously made hot-path ranking arbitrary dict order.
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
+
 from codegraph.graph.builder import GraphBuilder, _pagerank_power_iteration
 from codegraph.graph.queries import GraphQuery
 from codegraph.models import EdgeKind, FileNode, FunctionNode, GraphEdge
@@ -109,6 +113,32 @@ def test_builder_resolves_calls_so_find_callers_works(tmp_db):
     assert "func:?::helper" not in store.graph.nodes
     callers = GraphQuery(store).get_callers("func:m.py::helper", depth=1)
     assert any(c.get("node_id") == "func:m.py::driver" for c in callers)
+
+
+@pytest.mark.parametrize(
+    "fixture",
+    [
+        "go_sample/server.go",
+        "rust_sample/animals.rs",
+        "java_sample/Animals.java",
+        "typescript_sample/api.ts",
+    ],
+)
+def test_every_language_parser_emits_call_edges(fixture):
+    """Each language parser produces well-formed CALLS placeholders."""
+    from codegraph.models import EdgeKind as _EK
+    from codegraph.parsers.registry import ParserRegistry as _PR
+
+    path = Path(__file__).parent / "fixtures" / fixture
+    parser = _PR.default().get_parser(path)
+    result = parser.parse(path, path.read_bytes(), path.parent.parent.parent)
+
+    assert result.calls, f"{fixture} produced no call edges"
+    for edge in result.calls:
+        assert edge.kind == _EK.CALLS
+        assert edge.dst.startswith("func:?::")
+        assert edge.meta.get("callee")
+        assert edge.src.startswith("func:")  # attributed to an enclosing function
 
 
 def test_builder_drops_unresolvable_call_placeholder(tmp_db):

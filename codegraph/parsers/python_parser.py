@@ -317,30 +317,15 @@ class PythonParser(LanguageParser):
         if not result.functions:
             return
 
-        seen: set[tuple[str, str, int]] = set()
+        sites = []
         for call in self._iter_type(root, "call"):
             fn_field = call.child_by_field_name("function")
             if fn_field is None:
                 continue
             callee = self._callee_name(fn_field)
-            if not callee:
-                continue
-            line = call.start_point[0] + 1
-            caller = self._enclosing_function(line, result.functions)
-            if caller is None:
-                continue
-            key = (caller.node_id, callee, line)
-            if key in seen:
-                continue
-            seen.add(key)
-            result.calls.append(
-                GraphEdge(
-                    src=caller.node_id,
-                    dst=f"func:?::{callee}",
-                    kind=EdgeKind.CALLS,
-                    meta={"resolved": False, "line": line, "callee": callee},
-                )
-            )
+            if callee:
+                sites.append((callee, call.start_point[0] + 1))
+        self._emit_call_edges(sites, result)
 
     def _callee_name(self, fn_node) -> str | None:
         """Resolve a call's target to a bare name.
@@ -354,17 +339,6 @@ class PythonParser(LanguageParser):
             if attr is not None:
                 return attr.text.decode("utf-8", errors="replace")
         return None
-
-    def _enclosing_function(self, line: int, functions: list[FunctionNode]):
-        """Return the most tightly-scoped function whose span contains ``line``."""
-        best = None
-        for fn in functions:
-            if fn.line_start <= line <= fn.line_end:
-                if best is None or (fn.line_end - fn.line_start) < (
-                    best.line_end - best.line_start
-                ):
-                    best = fn
-        return best
 
     # ------------------------------------------------------------------
     # Type alias extraction
