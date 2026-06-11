@@ -208,27 +208,49 @@ class GraphBuilder:
 
     def _resolve_cross_file_references(self) -> None:
         """
-        Second pass: resolve placeholder class IDs (class:?::ClassName)
-        to real node IDs by building a name→ID index.
+        Second pass: bind placeholder edge targets to real node IDs.
+
+        - ``class:?::Name`` (inherits) resolves to a uniquely-named class.
+        - ``func:?::name`` (calls) resolves to a function by name, preferring
+          a same-file candidate when the name is ambiguous; call placeholders
+          that can't be bound are dropped rather than left as phantom nodes.
         """
         G = self.store.graph
-        name_to_ids: dict[str, list[str]] = {}
+        class_index: dict[str, list[str]] = {}
+        func_index: dict[str, list[str]] = {}
         for nid, data in G.nodes(data=True):
-            if data.get("kind") == NodeKind.CLASS:
-                name = data.get("name", "")
-                if name:
-                    name_to_ids.setdefault(name, []).append(nid)
+            name = data.get("name", "")
+            if not name:
+                continue
+            kind = data.get("kind")
+            if kind == NodeKind.CLASS:
+                class_index.setdefault(name, []).append(nid)
+            elif kind == NodeKind.FUNCTION:
+                func_index.setdefault(name, []).append(nid)
 
-        to_update = []
+        to_update = []  # (src, old_dst, key, new_dst, data)
+        to_remove = []  # (src, dst, key) — unresolvable call placeholders
         for src, dst, key in list(G.edges(keys=True)):
-            if isinstance(dst, str) and dst.startswith("class:?::"):
-                base_name = dst[len("class:?::"):]
-                candidates = name_to_ids.get(base_name, [])
+            if not isinstance(dst, str):
+                continue
+            if dst.startswith("class:?::"):
+                candidates = class_index.get(dst[len("class:?::"):], [])
                 if len(candidates) == 1:
                     raw = dict(G.edges[src, dst, key])
-                    # strip keys that we'll set explicitly
                     edge_data = {k: v for k, v in raw.items() if k != "resolved"}
                     to_update.append((src, dst, key, candidates[0], edge_data))
+            elif dst.startswith("func:?::"):
+                chosen = self._pick_call_target(
+                    src, func_index.get(dst[len("func:?::"):], [])
+                )
+                if chosen is not None and chosen != src:
+                    raw = dict(G.edges[src, dst, key])
+                    edge_data = {k: v for k, v in raw.items() if k != "resolved"}
+                    to_update.append((src, dst, key, chosen, edge_data))
+                else:
+                    to_remove.append((src, dst, key))
+
+        import orjson as _orjson
 
         for src, old_dst, key, new_dst, data in to_update:
             try:
@@ -236,7 +258,6 @@ class GraphBuilder:
             except Exception:
                 pass
             G.add_edge(src, new_dst, key=key, resolved=True, **data)
-            import orjson as _orjson
             meta_json = _orjson.dumps({**data, "resolved": True}).decode()
             self.store._db.execute(
                 "DELETE FROM edges WHERE src=? AND dst=? AND kind=?",
@@ -246,7 +267,49 @@ class GraphBuilder:
                 "INSERT OR REPLACE INTO edges(src,dst,kind,meta) VALUES(?,?,?,?)",
                 (src, new_dst, key, meta_json),
             )
+
+        for src, dst, key in to_remove:
+            try:
+                G.remove_edge(src, dst, key=key)
+            except Exception:
+                pass
+            self.store._db.execute(
+                "DELETE FROM edges WHERE src=? AND dst=? AND kind=?",
+                (src, dst, key),
+            )
+
+        # Drop placeholder nodes left isolated after resolution/removal.
+        for nid in [
+            n for n in G.nodes
+            if isinstance(n, str) and "::?::" not in n and n.startswith(("func:?::", "class:?::"))
+            and G.degree(n) == 0
+        ]:
+            G.remove_node(nid)
+
         self.store._db.commit()
+
+    @staticmethod
+    def _pick_call_target(src_id: str, candidates: list[str]) -> str | None:
+        """Choose a callee among same-named functions.
+
+        Unique name → bind it. Ambiguous → bind only if exactly one candidate
+        lives in the caller's file; otherwise give up (skip the edge) rather
+        than inventing false call relationships.
+        """
+        if not candidates:
+            return None
+        if len(candidates) == 1:
+            return candidates[0]
+        if src_id.startswith("func:"):
+            src_rel = src_id[len("func:"):].split("::", 1)[0]
+            same_file = [
+                c for c in candidates
+                if c.startswith("func:")
+                and c[len("func:"):].split("::", 1)[0] == src_rel
+            ]
+            if len(same_file) == 1:
+                return same_file[0]
+        return None
 
     def _compute_derived_metrics(self) -> None:
         """Compute PageRank for hot-path ranking.

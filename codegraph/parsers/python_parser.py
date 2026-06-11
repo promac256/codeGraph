@@ -79,6 +79,7 @@ class PythonParser(LanguageParser):
             self._extract_functions(tree.root_node, file_id, rel, source_text, result)
             self._extract_imports(tree.root_node, file_id, rel, source_text, result)
             self._extract_type_aliases(tree.root_node, file_id, rel, source_text, result)
+            self._extract_calls(tree.root_node, file_id, rel, source_text, result)
         except Exception as e:
             result.errors.append(f"tree-sitter parse error: {e}")
 
@@ -293,6 +294,77 @@ class PythonParser(LanguageParser):
                     },
                 )
             )
+
+    # ------------------------------------------------------------------
+    # Call extraction
+    # ------------------------------------------------------------------
+
+    def _extract_calls(
+        self,
+        root,
+        file_id: str,
+        rel: str,
+        source_text: str,
+        result: ParseResult,
+    ) -> None:
+        """Emit a CALLS edge from each enclosing function to every callee.
+
+        Callees are emitted as unresolved ``func:?::name`` placeholders and
+        bound to real function nodes in the builder's cross-file pass. Calls
+        at module scope (no enclosing function) are skipped — there is no
+        caller node to attribute them to.
+        """
+        if not result.functions:
+            return
+
+        seen: set[tuple[str, str, int]] = set()
+        for call in self._iter_type(root, "call"):
+            fn_field = call.child_by_field_name("function")
+            if fn_field is None:
+                continue
+            callee = self._callee_name(fn_field)
+            if not callee:
+                continue
+            line = call.start_point[0] + 1
+            caller = self._enclosing_function(line, result.functions)
+            if caller is None:
+                continue
+            key = (caller.node_id, callee, line)
+            if key in seen:
+                continue
+            seen.add(key)
+            result.calls.append(
+                GraphEdge(
+                    src=caller.node_id,
+                    dst=f"func:?::{callee}",
+                    kind=EdgeKind.CALLS,
+                    meta={"resolved": False, "line": line, "callee": callee},
+                )
+            )
+
+    def _callee_name(self, fn_node) -> str | None:
+        """Resolve a call's target to a bare name.
+
+        ``foo()`` -> ``foo``; ``obj.method()`` / ``self.method()`` -> ``method``.
+        """
+        if fn_node.type == "identifier":
+            return fn_node.text.decode("utf-8", errors="replace")
+        if fn_node.type == "attribute":
+            attr = fn_node.child_by_field_name("attribute")
+            if attr is not None:
+                return attr.text.decode("utf-8", errors="replace")
+        return None
+
+    def _enclosing_function(self, line: int, functions: list[FunctionNode]):
+        """Return the most tightly-scoped function whose span contains ``line``."""
+        best = None
+        for fn in functions:
+            if fn.line_start <= line <= fn.line_end:
+                if best is None or (fn.line_end - fn.line_start) < (
+                    best.line_end - best.line_start
+                ):
+                    best = fn
+        return best
 
     # ------------------------------------------------------------------
     # Type alias extraction
