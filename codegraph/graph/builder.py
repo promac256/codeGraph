@@ -35,6 +35,46 @@ SKIP_EXTENSIONS = frozenset({
 MAX_FILE_SIZE = 512 * 1024  # 512 KB
 
 
+def _pagerank_power_iteration(
+    edges: list[tuple[str, str]],
+    alpha: float = 0.85,
+    max_iter: int = 100,
+    tol: float = 1.0e-6,
+) -> dict[str, float]:
+    """Pure-Python PageRank via power iteration.
+
+    NetworkX's ``pagerank`` requires scipy; this fallback keeps hot-path
+    ranking working when scipy is not installed. Handles dangling nodes by
+    redistributing their rank uniformly. Returns {node_id: score}.
+    """
+    out_links: dict[str, list[str]] = {}
+    nodes: set[str] = set()
+    for src, dst in edges:
+        out_links.setdefault(src, []).append(dst)
+        nodes.add(src)
+        nodes.add(dst)
+
+    n = len(nodes)
+    if n == 0:
+        return {}
+
+    rank = {node: 1.0 / n for node in nodes}
+    dangling = [node for node in nodes if node not in out_links]
+    base = (1.0 - alpha) / n
+
+    for _ in range(max_iter):
+        prev = rank
+        dangling_mass = alpha * sum(prev[node] for node in dangling) / n
+        rank = {node: base + dangling_mass for node in nodes}
+        for src, dsts in out_links.items():
+            share = alpha * prev[src] / len(dsts)
+            for dst in dsts:
+                rank[dst] += share
+        if sum(abs(rank[node] - prev[node]) for node in nodes) < tol:
+            break
+    return rank
+
+
 class GraphBuilder:
     """Builds the complete knowledge graph from scratch."""
 
@@ -89,6 +129,7 @@ class GraphBuilder:
 
         self._resolve_cross_file_references()
         self._compute_derived_metrics()
+        stats["commits"] = self._ingest_git_history()
 
         stats["nodes"] = self.store.graph.number_of_nodes()
         stats["edges"] = self.store.graph.number_of_edges()
@@ -167,27 +208,51 @@ class GraphBuilder:
 
     def _resolve_cross_file_references(self) -> None:
         """
-        Second pass: resolve placeholder class IDs (class:?::ClassName)
-        to real node IDs by building a name→ID index.
+        Second pass: bind placeholder edge targets to real node IDs.
+
+        - ``class:?::Name`` (inherits) resolves to a uniquely-named class.
+        - ``func:?::name`` (calls) resolves to a function by name, preferring
+          a same-file candidate when the name is ambiguous; call placeholders
+          that can't be bound are dropped rather than left as phantom nodes.
         """
         G = self.store.graph
-        name_to_ids: dict[str, list[str]] = {}
+        class_index: dict[str, list[str]] = {}
+        func_index: dict[str, list[str]] = {}
         for nid, data in G.nodes(data=True):
-            if data.get("kind") == NodeKind.CLASS:
-                name = data.get("name", "")
-                if name:
-                    name_to_ids.setdefault(name, []).append(nid)
+            name = data.get("name", "")
+            if not name:
+                continue
+            kind = data.get("kind")
+            if kind == NodeKind.CLASS:
+                class_index.setdefault(name, []).append(nid)
+            elif kind == NodeKind.FUNCTION:
+                func_index.setdefault(name, []).append(nid)
 
-        to_update = []
+        to_update = []  # (src, old_dst, key, new_dst, data)
+        to_remove = []  # (src, dst, key) — unresolvable call placeholders
         for src, dst, key in list(G.edges(keys=True)):
-            if isinstance(dst, str) and dst.startswith("class:?::"):
-                base_name = dst[len("class:?::"):]
-                candidates = name_to_ids.get(base_name, [])
+            if not isinstance(dst, str):
+                continue
+            if dst.startswith("class:?::"):
+                candidates = class_index.get(dst[len("class:?::"):], [])
                 if len(candidates) == 1:
                     raw = dict(G.edges[src, dst, key])
-                    # strip keys that we'll set explicitly
                     edge_data = {k: v for k, v in raw.items() if k != "resolved"}
                     to_update.append((src, dst, key, candidates[0], edge_data))
+            elif dst.startswith("func:?::"):
+                callee = dst[len("func:?::"):]
+                raw = dict(G.edges[src, dst, key])
+                chosen = self._pick_call_target(
+                    src, callee, func_index.get(callee, []),
+                    self_call=bool(raw.get("self_call")), nodes=G.nodes,
+                )
+                if chosen is not None and chosen != src:
+                    edge_data = {k: v for k, v in raw.items() if k != "resolved"}
+                    to_update.append((src, dst, key, chosen, edge_data))
+                else:
+                    to_remove.append((src, dst, key))
+
+        import orjson as _orjson
 
         for src, old_dst, key, new_dst, data in to_update:
             try:
@@ -195,7 +260,6 @@ class GraphBuilder:
             except Exception:
                 pass
             G.add_edge(src, new_dst, key=key, resolved=True, **data)
-            import orjson as _orjson
             meta_json = _orjson.dumps({**data, "resolved": True}).decode()
             self.store._db.execute(
                 "DELETE FROM edges WHERE src=? AND dst=? AND kind=?",
@@ -205,23 +269,110 @@ class GraphBuilder:
                 "INSERT OR REPLACE INTO edges(src,dst,kind,meta) VALUES(?,?,?,?)",
                 (src, new_dst, key, meta_json),
             )
+
+        for src, dst, key in to_remove:
+            try:
+                G.remove_edge(src, dst, key=key)
+            except Exception:
+                pass
+            self.store._db.execute(
+                "DELETE FROM edges WHERE src=? AND dst=? AND kind=?",
+                (src, dst, key),
+            )
+
+        # Drop placeholder nodes left isolated after resolution/removal.
+        for nid in [
+            n for n in G.nodes
+            if isinstance(n, str) and "::?::" not in n and n.startswith(("func:?::", "class:?::"))
+            and G.degree(n) == 0
+        ]:
+            G.remove_node(nid)
+
         self.store._db.commit()
 
+    @staticmethod
+    def _pick_call_target(
+        src_id: str,
+        callee_name: str,
+        candidates: list[str],
+        self_call: bool = False,
+        nodes=None,
+    ) -> str | None:
+        """Choose a callee among same-named functions.
+
+        Resolution order:
+        1. ``self``/``this``/unqualified call → the same-named method on the
+           caller's own class (derived from the caller's qualified name). This
+           is the precise case: it never binds a ``self.read()`` to an
+           unrelated module function named ``read``.
+        2. Unique name across the repo → bind it.
+        3. Ambiguous name → bind only if exactly one candidate lives in the
+           caller's file; otherwise give up rather than invent a false edge.
+        """
+        if self_call and nodes is not None and src_id.startswith("func:"):
+            body = src_id[len("func:"):]
+            if "::" in body:
+                rel, qualified = body.split("::", 1)
+                if "." in qualified:  # caller is a method → has an owning class
+                    owner = qualified.rsplit(".", 1)[0]
+                    candidate = f"func:{rel}::{owner}.{callee_name}"
+                    if candidate != src_id and candidate in nodes:
+                        return candidate
+
+        if not candidates:
+            return None
+        if len(candidates) == 1:
+            return candidates[0]
+        if src_id.startswith("func:"):
+            src_rel = src_id[len("func:"):].split("::", 1)[0]
+            same_file = [
+                c for c in candidates
+                if c.startswith("func:")
+                and c[len("func:"):].split("::", 1)[0] == src_rel
+            ]
+            if len(same_file) == 1:
+                return same_file[0]
+        return None
+
     def _compute_derived_metrics(self) -> None:
-        """Compute PageRank on call graph for hot-path ranking."""
+        """Compute PageRank for hot-path ranking.
+
+        Prefers the call graph, but parsers do not yet emit ``calls`` edges
+        for every language (Python, the bulk of most repos, emits none). When
+        the call graph is empty we fall back to the structural dependency
+        graph so ranking still reflects real centrality instead of leaving
+        every node at PageRank 0 (which made hot-paths arbitrary dict order).
+        """
         G = self.store.graph
 
-        call_edges = [
+        rank_edges = [
             (s, d)
             for s, d, k in G.edges(keys=True)
             if k == EdgeKind.CALLS
         ]
-        if not call_edges:
+        if not rank_edges:
+            structural = (
+                EdgeKind.IMPORTS,
+                EdgeKind.INHERITS,
+                EdgeKind.IMPLEMENTS,
+                EdgeKind.DEFINES,
+            )
+            rank_edges = [
+                (s, d)
+                for s, d, k in G.edges(keys=True)
+                if k in structural
+            ]
+        if not rank_edges:
             return
 
-        call_subgraph = nx.DiGraph(call_edges)
+        rank_graph = nx.DiGraph(rank_edges)
         try:
-            pr = nx.pagerank(call_subgraph, alpha=0.85)
+            # NetworkX delegates pagerank to scipy; fall back to a
+            # dependency-free power iteration when scipy is absent rather
+            # than silently leaving every node at PageRank 0.
+            pr = nx.pagerank(rank_graph, alpha=0.85)
+        except ImportError:
+            pr = _pagerank_power_iteration(rank_edges, alpha=0.85)
         except Exception:
             return
 
@@ -237,3 +388,70 @@ class GraphBuilder:
                 updates,
             )
             self.store._db.commit()
+
+    def _ingest_git_history(self, max_commits: int = 1000) -> int:
+        """Walk git history to populate commit rows, MODIFIES edges, and the
+        per-file ``commit_count`` churn signal used by hot-path ranking.
+
+        A fresh ``init`` previously never touched git (only ``update`` did),
+        so every node scored 0 commits and the churn half of the hot-path
+        score was always empty. Also seeds ``last_indexed_sha`` so the first
+        subsequent ``update`` diffs from HEAD rather than re-walking from the
+        repo root. Returns the number of commits ingested.
+        """
+        import collections
+
+        import orjson
+
+        from codegraph.git.local_repo import LocalRepo
+        from codegraph.models import EdgeKind, GraphEdge
+
+        repo = LocalRepo(self.repo_root)
+        commits = repo.get_commits_since(None, limit=max_commits)
+        if not commits:
+            return 0
+
+        G = self.store.graph
+        counts: collections.Counter = collections.Counter()
+        for c in commits:
+            self.store._db.execute(
+                "INSERT OR REPLACE INTO commits(sha,author,ts,message,data) "
+                "VALUES(?,?,?,?,?)",
+                (
+                    c["sha"],
+                    c.get("author", ""),
+                    c.get("timestamp", 0),
+                    c.get("message", ""),
+                    orjson.dumps(c).decode(),
+                ),
+            )
+            commit_id = f"commit:{c['sha']}"
+            for file_path in c.get("files_changed", []):
+                file_id = f"file:{file_path}"
+                if file_id not in G.nodes:
+                    continue  # file deleted since, or not a parsed source file
+                self.store._db.execute(
+                    "INSERT OR IGNORE INTO file_commits(file,sha) VALUES(?,?)",
+                    (file_id, c["sha"]),
+                )
+                self.store.upsert_edge(
+                    GraphEdge(
+                        src=commit_id,
+                        dst=file_id,
+                        kind=EdgeKind.MODIFIES,
+                        meta={},
+                    )
+                )
+                counts[file_id] += 1
+
+        for file_id, n in counts.items():
+            G.nodes[file_id]["commit_count"] = n
+        if counts:
+            self.store._db.executemany(
+                "UPDATE nodes SET data=json_set(data,'$.commit_count',?) "
+                "WHERE node_id=?",
+                [(n, fid) for fid, n in counts.items()],
+            )
+        self.store.set_config("last_indexed_sha", commits[0]["sha"])
+        self.store._db.commit()
+        return len(commits)

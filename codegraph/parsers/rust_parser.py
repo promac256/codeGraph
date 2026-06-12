@@ -203,6 +203,7 @@ class RustParser(LanguageParser):
             self._extract_free_functions(root, file_id, rel, source, result)
             self._extract_impl_blocks(root, file_id, rel, source, result)
             self._extract_imports(root, file_id, rel, source, result)
+            self._extract_calls(root, result)
         except Exception as e:
             result.errors.append(f"tree-sitter parse error: {e}")
 
@@ -430,3 +431,51 @@ class RustParser(LanguageParser):
                         )
                     )
                 break
+
+    # ------------------------------------------------------------------
+    # Calls
+    # ------------------------------------------------------------------
+
+    def _extract_calls(self, root, result: ParseResult) -> None:
+        if not result.functions:
+            return
+        sites = []
+        # Free / associated calls: foo(), Type::new(), x.field() etc.
+        for call in _iter_type(root, "call_expression"):
+            fn = call.child_by_field_name("function")
+            if fn is None:
+                continue
+            name, scope = self._callee_info(fn)
+            if name:
+                sites.append((name, call.start_point[0] + 1, scope))
+        # Method calls: receiver.method(args)
+        for call in _iter_type(root, "method_call_expression"):
+            method = call.child_by_field_name("method")
+            if method is not None:
+                receiver = call.child_by_field_name("receiver")
+                is_self = receiver is not None and receiver.type == "self"
+                sites.append(
+                    (method.text.decode("utf-8", errors="replace"),
+                     call.start_point[0] + 1, "self" if is_self else "attr")
+                )
+        self._emit_call_edges(sites, result)
+
+    def _callee_info(self, fn) -> tuple[str | None, str]:
+        t = fn.type
+        if t == "identifier":
+            return fn.text.decode("utf-8", errors="replace"), "free"
+        if t == "field_expression":
+            field = fn.child_by_field_name("field")
+            if field is not None:
+                return field.text.decode("utf-8", errors="replace"), "attr"
+            return None, "free"
+        if t == "scoped_identifier":
+            name = fn.child_by_field_name("name")
+            if name is not None:
+                return name.text.decode("utf-8", errors="replace"), "free"
+            return None, "free"
+        if t == "generic_function":
+            inner = fn.child_by_field_name("function")
+            if inner is not None:
+                return self._callee_info(inner)
+        return None, "free"

@@ -79,6 +79,7 @@ class PythonParser(LanguageParser):
             self._extract_functions(tree.root_node, file_id, rel, source_text, result)
             self._extract_imports(tree.root_node, file_id, rel, source_text, result)
             self._extract_type_aliases(tree.root_node, file_id, rel, source_text, result)
+            self._extract_calls(tree.root_node, file_id, rel, source_text, result)
         except Exception as e:
             result.errors.append(f"tree-sitter parse error: {e}")
 
@@ -293,6 +294,59 @@ class PythonParser(LanguageParser):
                     },
                 )
             )
+
+    # ------------------------------------------------------------------
+    # Call extraction
+    # ------------------------------------------------------------------
+
+    def _extract_calls(
+        self,
+        root,
+        file_id: str,
+        rel: str,
+        source_text: str,
+        result: ParseResult,
+    ) -> None:
+        """Emit a CALLS edge from each enclosing function to every callee.
+
+        Callees are emitted as unresolved ``func:?::name`` placeholders and
+        bound to real function nodes in the builder's cross-file pass. Calls
+        at module scope (no enclosing function) are skipped — there is no
+        caller node to attribute them to.
+        """
+        if not result.functions:
+            return
+
+        sites = []
+        for call in self._iter_type(root, "call"):
+            fn_field = call.child_by_field_name("function")
+            if fn_field is None:
+                continue
+            callee, scope = self._callee_info(fn_field)
+            if callee:
+                sites.append((callee, call.start_point[0] + 1, scope))
+        self._emit_call_edges(sites, result)
+
+    def _callee_info(self, fn_node) -> tuple[str | None, str]:
+        """Resolve a call's target to ``(bare_name, scope)``.
+
+        ``foo()`` -> ``("foo", "free")``; ``obj.method()`` -> ``("method", "attr")``;
+        ``self.method()`` / ``cls.method()`` -> ``("method", "self")``.
+        """
+        if fn_node.type == "identifier":
+            return fn_node.text.decode("utf-8", errors="replace"), "free"
+        if fn_node.type == "attribute":
+            attr = fn_node.child_by_field_name("attribute")
+            if attr is None:
+                return None, "free"
+            obj = fn_node.child_by_field_name("object")
+            is_self = (
+                obj is not None
+                and obj.type == "identifier"
+                and obj.text.decode("utf-8", errors="replace") in ("self", "cls")
+            )
+            return attr.text.decode("utf-8", errors="replace"), "self" if is_self else "attr"
+        return None, "free"
 
     # ------------------------------------------------------------------
     # Type alias extraction

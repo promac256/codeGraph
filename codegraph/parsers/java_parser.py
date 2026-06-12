@@ -190,6 +190,7 @@ class JavaParser(LanguageParser):
             self._extract_interfaces(root, file_id, rel, source, lines, result)
             self._extract_enums(root, file_id, rel, source, lines, result)
             self._extract_imports(root, file_id, rel, source, result)
+            self._extract_calls(root, result)
         except Exception as e:
             result.errors.append(f"tree-sitter parse error: {e}")
 
@@ -365,6 +366,28 @@ class JavaParser(LanguageParser):
                     meta={"module": module, "is_relative": is_relative},
                 )
             )
+
+    # ------------------------------------------------------------------
+    # Calls
+    # ------------------------------------------------------------------
+
+    def _extract_calls(self, root, result: ParseResult) -> None:
+        if not result.functions:
+            return
+        sites = []
+        for call in _iter_type(root, "method_invocation"):
+            name_node = call.child_by_field_name("name")
+            if name_node is None:
+                continue
+            # No object (unqualified) or an explicit `this` receiver means the
+            # call targets a method on the caller's own class.
+            obj = call.child_by_field_name("object")
+            scope = "self" if (obj is None or obj.type == "this") else "attr"
+            sites.append(
+                (name_node.text.decode("utf-8", errors="replace"),
+                 call.start_point[0] + 1, scope)
+            )
+        self._emit_call_edges(sites, result)
 
     # ------------------------------------------------------------------
     # Methods and constructors
