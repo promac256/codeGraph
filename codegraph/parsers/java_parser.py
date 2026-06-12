@@ -382,10 +382,10 @@ class JavaParser(LanguageParser):
             # No object (unqualified) or an explicit `this` receiver means the
             # call targets a method on the caller's own class.
             obj = call.child_by_field_name("object")
-            is_self = obj is None or obj.type == "this"
+            scope = "self" if (obj is None or obj.type == "this") else "attr"
             sites.append(
                 (name_node.text.decode("utf-8", errors="replace"),
-                 call.start_point[0] + 1, is_self)
+                 call.start_point[0] + 1, scope)
             )
         self._emit_call_edges(sites, result)
 

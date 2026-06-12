@@ -386,20 +386,20 @@ class GoParser(LanguageParser):
             fn = call.child_by_field_name("function")
             if fn is None:
                 continue
-            name = self._callee_name(fn)
+            name, scope = self._callee_info(fn)
             if name:
-                sites.append((name, call.start_point[0] + 1))
+                sites.append((name, call.start_point[0] + 1, scope))
         self._emit_call_edges(sites, result)
 
-    def _callee_name(self, fn) -> str | None:
-        # foo() -> foo ; pkg.Foo() / x.Method() -> Foo / Method
+    def _callee_info(self, fn) -> tuple[str | None, str]:
+        # foo() -> (foo, "free") ; pkg.Foo() / x.Method() -> (Foo/Method, "attr")
         if fn.type == "identifier":
-            return fn.text.decode("utf-8", errors="replace")
+            return fn.text.decode("utf-8", errors="replace"), "free"
         if fn.type == "selector_expression":
             field = fn.child_by_field_name("field")
             if field is not None:
-                return field.text.decode("utf-8", errors="replace")
-        return None
+                return field.text.decode("utf-8", errors="replace"), "attr"
+        return None, "free"
 
 
 # ------------------------------------------------------------------

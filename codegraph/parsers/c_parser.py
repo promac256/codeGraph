@@ -535,24 +535,26 @@ class CParser(LanguageParser):
             fn = call.child_by_field_name("function")
             if fn is None:
                 continue
-            name = self._callee_name(fn)
+            name, scope = self._callee_info(fn)
             if name:
-                sites.append((name, call.start_point[0] + 1))
+                sites.append((name, call.start_point[0] + 1, scope))
         self._emit_call_edges(sites, result)
 
-    def _callee_name(self, fn) -> str | None:
-        # foo() -> foo ; obj.m()/obj->m() -> m ; ns::foo() -> foo
+    def _callee_info(self, fn) -> tuple[str | None, str]:
+        # foo() -> (foo, "free") ; obj.m()/obj->m() -> (m, "attr") ;
+        # ns::foo() -> (foo, "free")
         t = fn.type
         if t == "identifier":
-            return fn.text.decode("utf-8", errors="replace")
+            return fn.text.decode("utf-8", errors="replace"), "free"
         if t == "field_expression":
             field = fn.child_by_field_name("field")
             if field is not None:
-                return field.text.decode("utf-8", errors="replace")
+                return field.text.decode("utf-8", errors="replace"), "attr"
+            return None, "free"
         if t == "qualified_identifier":
             name = fn.child_by_field_name("name")
             if name is not None:
                 if name.type == "qualified_identifier":
-                    return self._callee_name(name)
-                return name.text.decode("utf-8", errors="replace")
-        return None
+                    return self._callee_info(name)
+                return name.text.decode("utf-8", errors="replace"), "free"
+        return None, "free"

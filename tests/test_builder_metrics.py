@@ -190,6 +190,33 @@ def test_self_call_binds_to_callers_own_class(tmp_db):
     assert b_callers == {"func:m.py::B.run"}
 
 
+def test_builtin_attr_calls_are_suppressed(tmp_path):
+    """`path.exists()` / `buf.read()` must not bind to project functions, but
+    `self.exists()`, a direct `exists()`, and non-builtin attr calls survive."""
+    src = (
+        "import os\n"
+        "class C:\n"
+        "    def exists(self):\n"
+        "        return True\n"
+        "    def run(self, path, helper):\n"
+        "        a = path.exists()\n"        # attr + builtin  -> dropped
+        "        b = self.exists()\n"        # self            -> kept
+        "        c = exists()\n"             # free            -> kept
+        "        d = helper.custom_thing()\n"  # attr + non-builtin -> kept
+        "        return a\n"
+    )
+    path = tmp_path / "c.py"
+    path.write_bytes(src.encode())
+    result = PythonParser().parse(path, src.encode(), tmp_path)
+
+    callees = [e.meta["callee"] for e in result.calls]
+    # exists appears for self + free (2), never from path.exists()
+    assert callees.count("exists") == 2
+    assert "custom_thing" in callees
+    self_flags = {e.meta["callee"]: e.meta.get("self_call") for e in result.calls}
+    assert self_flags.get("custom_thing") is not True
+
+
 def test_builder_drops_unresolvable_call_placeholder(tmp_db):
     store = tmp_db
     caller = FunctionNode(

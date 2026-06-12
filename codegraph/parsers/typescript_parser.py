@@ -264,24 +264,24 @@ class TypeScriptParser(LanguageParser):
             fn = call.child_by_field_name("function")
             if fn is None:
                 continue
-            name, is_self = self._callee_info(fn)
+            name, scope = self._callee_info(fn)
             if name:
-                sites.append((name, call.start_point[0] + 1, is_self))
+                sites.append((name, call.start_point[0] + 1, scope))
         self._emit_call_edges(sites, result)
 
-    def _callee_info(self, fn) -> tuple[str | None, bool]:
-        # foo() -> (foo, False) ; obj.method() -> (method, False) ;
-        # this.method() -> (method, True)
+    def _callee_info(self, fn) -> tuple[str | None, str]:
+        # foo() -> (foo, "free") ; obj.method() -> (method, "attr") ;
+        # this.method() -> (method, "self")
         if fn.type == "identifier":
-            return fn.text.decode("utf-8", errors="replace"), False
+            return fn.text.decode("utf-8", errors="replace"), "free"
         if fn.type == "member_expression":
             prop = fn.child_by_field_name("property")
             if prop is None:
-                return None, False
+                return None, "free"
             obj = fn.child_by_field_name("object")
             is_self = obj is not None and obj.type == "this"
-            return prop.text.decode("utf-8", errors="replace"), is_self
-        return None, False
+            return prop.text.decode("utf-8", errors="replace"), "self" if is_self else "attr"
+        return None, "free"
 
     def _iter_type(self, node, node_type: str):
         if node.type == node_type:

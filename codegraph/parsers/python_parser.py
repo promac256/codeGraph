@@ -322,31 +322,31 @@ class PythonParser(LanguageParser):
             fn_field = call.child_by_field_name("function")
             if fn_field is None:
                 continue
-            callee, is_self = self._callee_info(fn_field)
+            callee, scope = self._callee_info(fn_field)
             if callee:
-                sites.append((callee, call.start_point[0] + 1, is_self))
+                sites.append((callee, call.start_point[0] + 1, scope))
         self._emit_call_edges(sites, result)
 
-    def _callee_info(self, fn_node) -> tuple[str | None, bool]:
-        """Resolve a call's target to ``(bare_name, is_self_call)``.
+    def _callee_info(self, fn_node) -> tuple[str | None, str]:
+        """Resolve a call's target to ``(bare_name, scope)``.
 
-        ``foo()`` -> ``("foo", False)``; ``obj.method()`` -> ``("method", False)``;
-        ``self.method()`` / ``cls.method()`` -> ``("method", True)``.
+        ``foo()`` -> ``("foo", "free")``; ``obj.method()`` -> ``("method", "attr")``;
+        ``self.method()`` / ``cls.method()`` -> ``("method", "self")``.
         """
         if fn_node.type == "identifier":
-            return fn_node.text.decode("utf-8", errors="replace"), False
+            return fn_node.text.decode("utf-8", errors="replace"), "free"
         if fn_node.type == "attribute":
             attr = fn_node.child_by_field_name("attribute")
             if attr is None:
-                return None, False
+                return None, "free"
             obj = fn_node.child_by_field_name("object")
             is_self = (
                 obj is not None
                 and obj.type == "identifier"
                 and obj.text.decode("utf-8", errors="replace") in ("self", "cls")
             )
-            return attr.text.decode("utf-8", errors="replace"), is_self
-        return None, False
+            return attr.text.decode("utf-8", errors="replace"), "self" if is_self else "attr"
+        return None, "free"
 
     # ------------------------------------------------------------------
     # Type alias extraction
