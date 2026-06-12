@@ -240,11 +240,13 @@ class GraphBuilder:
                     edge_data = {k: v for k, v in raw.items() if k != "resolved"}
                     to_update.append((src, dst, key, candidates[0], edge_data))
             elif dst.startswith("func:?::"):
+                callee = dst[len("func:?::"):]
+                raw = dict(G.edges[src, dst, key])
                 chosen = self._pick_call_target(
-                    src, func_index.get(dst[len("func:?::"):], [])
+                    src, callee, func_index.get(callee, []),
+                    self_call=bool(raw.get("self_call")), nodes=G.nodes,
                 )
                 if chosen is not None and chosen != src:
-                    raw = dict(G.edges[src, dst, key])
                     edge_data = {k: v for k, v in raw.items() if k != "resolved"}
                     to_update.append((src, dst, key, chosen, edge_data))
                 else:
@@ -289,13 +291,34 @@ class GraphBuilder:
         self.store._db.commit()
 
     @staticmethod
-    def _pick_call_target(src_id: str, candidates: list[str]) -> str | None:
+    def _pick_call_target(
+        src_id: str,
+        callee_name: str,
+        candidates: list[str],
+        self_call: bool = False,
+        nodes=None,
+    ) -> str | None:
         """Choose a callee among same-named functions.
 
-        Unique name → bind it. Ambiguous → bind only if exactly one candidate
-        lives in the caller's file; otherwise give up (skip the edge) rather
-        than inventing false call relationships.
+        Resolution order:
+        1. ``self``/``this``/unqualified call → the same-named method on the
+           caller's own class (derived from the caller's qualified name). This
+           is the precise case: it never binds a ``self.read()`` to an
+           unrelated module function named ``read``.
+        2. Unique name across the repo → bind it.
+        3. Ambiguous name → bind only if exactly one candidate lives in the
+           caller's file; otherwise give up rather than invent a false edge.
         """
+        if self_call and nodes is not None and src_id.startswith("func:"):
+            body = src_id[len("func:"):]
+            if "::" in body:
+                rel, qualified = body.split("::", 1)
+                if "." in qualified:  # caller is a method → has an owning class
+                    owner = qualified.rsplit(".", 1)[0]
+                    candidate = f"func:{rel}::{owner}.{callee_name}"
+                    if candidate != src_id and candidate in nodes:
+                        return candidate
+
         if not candidates:
             return None
         if len(candidates) == 1:

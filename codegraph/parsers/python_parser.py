@@ -322,23 +322,31 @@ class PythonParser(LanguageParser):
             fn_field = call.child_by_field_name("function")
             if fn_field is None:
                 continue
-            callee = self._callee_name(fn_field)
+            callee, is_self = self._callee_info(fn_field)
             if callee:
-                sites.append((callee, call.start_point[0] + 1))
+                sites.append((callee, call.start_point[0] + 1, is_self))
         self._emit_call_edges(sites, result)
 
-    def _callee_name(self, fn_node) -> str | None:
-        """Resolve a call's target to a bare name.
+    def _callee_info(self, fn_node) -> tuple[str | None, bool]:
+        """Resolve a call's target to ``(bare_name, is_self_call)``.
 
-        ``foo()`` -> ``foo``; ``obj.method()`` / ``self.method()`` -> ``method``.
+        ``foo()`` -> ``("foo", False)``; ``obj.method()`` -> ``("method", False)``;
+        ``self.method()`` / ``cls.method()`` -> ``("method", True)``.
         """
         if fn_node.type == "identifier":
-            return fn_node.text.decode("utf-8", errors="replace")
+            return fn_node.text.decode("utf-8", errors="replace"), False
         if fn_node.type == "attribute":
             attr = fn_node.child_by_field_name("attribute")
-            if attr is not None:
-                return attr.text.decode("utf-8", errors="replace")
-        return None
+            if attr is None:
+                return None, False
+            obj = fn_node.child_by_field_name("object")
+            is_self = (
+                obj is not None
+                and obj.type == "identifier"
+                and obj.text.decode("utf-8", errors="replace") in ("self", "cls")
+            )
+            return attr.text.decode("utf-8", errors="replace"), is_self
+        return None, False
 
     # ------------------------------------------------------------------
     # Type alias extraction

@@ -377,10 +377,16 @@ class JavaParser(LanguageParser):
         sites = []
         for call in _iter_type(root, "method_invocation"):
             name_node = call.child_by_field_name("name")
-            if name_node is not None:
-                sites.append(
-                    (name_node.text.decode("utf-8", errors="replace"), call.start_point[0] + 1)
-                )
+            if name_node is None:
+                continue
+            # No object (unqualified) or an explicit `this` receiver means the
+            # call targets a method on the caller's own class.
+            obj = call.child_by_field_name("object")
+            is_self = obj is None or obj.type == "this"
+            sites.append(
+                (name_node.text.decode("utf-8", errors="replace"),
+                 call.start_point[0] + 1, is_self)
+            )
         self._emit_call_edges(sites, result)
 
     # ------------------------------------------------------------------

@@ -141,6 +141,55 @@ def test_every_language_parser_emits_call_edges(fixture):
         assert edge.src.startswith("func:")  # attributed to an enclosing function
 
 
+def test_python_self_calls_are_flagged(tmp_path):
+    src = (
+        "class A:\n"
+        "    def helper(self):\n"
+        "        return 1\n"
+        "    def driver(self):\n"
+        "        return self.helper() + other()\n"
+    )
+    path = tmp_path / "a.py"
+    path.write_bytes(src.encode())
+    result = PythonParser().parse(path, src.encode(), tmp_path)
+
+    by_callee = {e.meta["callee"]: e.meta for e in result.calls}
+    assert by_callee["helper"].get("self_call") is True
+    assert by_callee["other"].get("self_call") is not True
+
+
+def test_self_call_binds_to_callers_own_class(tmp_db):
+    """A self.method() call resolves to the caller's class, not a same-named
+    method on a different class in the same file."""
+    store = tmp_db
+    nodes = [
+        ("func:m.py::A.helper", "helper", "A.helper"),
+        ("func:m.py::A.driver", "driver", "A.driver"),
+        ("func:m.py::B.helper", "helper", "B.helper"),
+        ("func:m.py::B.run", "run", "B.run"),
+    ]
+    for nid, name, qual in nodes:
+        store.upsert_node(FunctionNode(
+            node_id=nid, name=name, qualified_name=qual,
+            file="file:m.py", line_start=1, line_end=2,
+        ))
+    for src in ("func:m.py::A.driver", "func:m.py::B.run"):
+        store.upsert_edge(GraphEdge(
+            src=src, dst="func:?::helper", kind=EdgeKind.CALLS,
+            meta={"resolved": False, "callee": "helper", "self_call": True},
+        ))
+    store.commit_transaction()
+
+    builder = GraphBuilder(store, ParserRegistry.default(), repo_root=store.db_path.parent)
+    builder._resolve_cross_file_references()
+
+    q = GraphQuery(store)
+    a_callers = {c["node_id"] for c in q.get_callers("func:m.py::A.helper")}
+    b_callers = {c["node_id"] for c in q.get_callers("func:m.py::B.helper")}
+    assert a_callers == {"func:m.py::A.driver"}
+    assert b_callers == {"func:m.py::B.run"}
+
+
 def test_builder_drops_unresolvable_call_placeholder(tmp_db):
     store = tmp_db
     caller = FunctionNode(

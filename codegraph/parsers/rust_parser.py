@@ -450,8 +450,14 @@ class RustParser(LanguageParser):
         for call in _iter_type(root, "method_call_expression"):
             method = call.child_by_field_name("method")
             if method is not None:
+                receiver = call.child_by_field_name("receiver")
+                is_self = (
+                    receiver is not None
+                    and receiver.type == "self"
+                )
                 sites.append(
-                    (method.text.decode("utf-8", errors="replace"), call.start_point[0] + 1)
+                    (method.text.decode("utf-8", errors="replace"),
+                     call.start_point[0] + 1, is_self)
                 )
         self._emit_call_edges(sites, result)
 

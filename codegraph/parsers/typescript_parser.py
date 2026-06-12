@@ -264,20 +264,24 @@ class TypeScriptParser(LanguageParser):
             fn = call.child_by_field_name("function")
             if fn is None:
                 continue
-            name = self._callee_name(fn)
+            name, is_self = self._callee_info(fn)
             if name:
-                sites.append((name, call.start_point[0] + 1))
+                sites.append((name, call.start_point[0] + 1, is_self))
         self._emit_call_edges(sites, result)
 
-    def _callee_name(self, fn) -> str | None:
-        # foo() -> foo ; obj.method() / this.method() -> method
+    def _callee_info(self, fn) -> tuple[str | None, bool]:
+        # foo() -> (foo, False) ; obj.method() -> (method, False) ;
+        # this.method() -> (method, True)
         if fn.type == "identifier":
-            return fn.text.decode("utf-8", errors="replace")
+            return fn.text.decode("utf-8", errors="replace"), False
         if fn.type == "member_expression":
             prop = fn.child_by_field_name("property")
-            if prop is not None:
-                return prop.text.decode("utf-8", errors="replace")
-        return None
+            if prop is None:
+                return None, False
+            obj = fn.child_by_field_name("object")
+            is_self = obj is not None and obj.type == "this"
+            return prop.text.decode("utf-8", errors="replace"), is_self
+        return None, False
 
     def _iter_type(self, node, node_type: str):
         if node.type == node_type:

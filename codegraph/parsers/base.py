@@ -56,14 +56,19 @@ class LanguageParser(ABC):
     def _emit_call_edges(self, call_sites, result: "ParseResult") -> None:
         """Build CALLS edges from call sites to their enclosing functions.
 
-        ``call_sites`` is an iterable of ``(callee_name, line)``. Callees are
-        emitted as unresolved ``func:?::name`` placeholders and bound to real
-        function nodes in the builder's cross-file pass. Sites with no
-        enclosing function (module/global scope) are skipped, as are duplicate
+        ``call_sites`` is an iterable of ``(callee_name, line)`` or
+        ``(callee_name, line, self_scoped)``. ``self_scoped`` marks calls on
+        the enclosing instance (``self``/``cls``/``this``, or an unqualified
+        method call) so the builder can bind them to the caller's own class
+        first. Callees are emitted as unresolved ``func:?::name`` placeholders
+        and bound in the builder's cross-file pass. Sites with no enclosing
+        function (module/global scope) are skipped, as are duplicate
         (caller, callee, line) triples.
         """
         seen: set[tuple[str, str, int]] = set()
-        for callee, line in call_sites:
+        for site in call_sites:
+            callee, line = site[0], site[1]
+            self_scoped = site[2] if len(site) > 2 else False
             if not callee:
                 continue
             caller = self._enclosing_function(line, result.functions)
@@ -73,12 +78,15 @@ class LanguageParser(ABC):
             if key in seen:
                 continue
             seen.add(key)
+            meta = {"resolved": False, "line": line, "callee": callee}
+            if self_scoped:
+                meta["self_call"] = True
             result.calls.append(
                 GraphEdge(
                     src=caller.node_id,
                     dst=f"func:?::{callee}",
                     kind=EdgeKind.CALLS,
-                    meta={"resolved": False, "line": line, "callee": callee},
+                    meta=meta,
                 )
             )
 
