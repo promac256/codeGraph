@@ -70,8 +70,8 @@
           "type": "string",
           "enum": ["python", "native"],
           "enumDescriptions": [
-            "Use the codegraph Python CLI via MCP (full feature set; requires a Python install).",
-            "Use the built-in in-process Node/WASM backend — no Python required (Python sources + core read tools; preview)."
+            "Use the codegraph Python CLI via MCP (full feature set incl. enrichment, diff, PR mining; requires a Python install).",
+            "Use the built-in in-process Node/WASM backend — no Python required (all 6 languages + core read tools; preview)."
           ],
           "default": "python",
           "description": "Which graph backend to use. 'native' needs no external install and runs in-process; 'python' uses the codegraph CLI for the full feature set."
