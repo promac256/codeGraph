@@ -7,8 +7,18 @@
   "engines": {
     "vscode": "^1.93.0"
   },
-  "categories": ["Other", "Visualization", "AI"],
-  "keywords": ["copilot", "knowledge graph", "code navigation", "ai", "mcp"],
+  "categories": [
+    "Other",
+    "Visualization",
+    "AI"
+  ],
+  "keywords": [
+    "copilot",
+    "knowledge graph",
+    "code navigation",
+    "ai",
+    "mcp"
+  ],
   "activationEvents": [
     "onStartupFinished"
   ],
@@ -56,6 +66,16 @@
     "configuration": {
       "title": "codeGraph",
       "properties": {
+        "codegraph.backend": {
+          "type": "string",
+          "enum": ["python", "native"],
+          "enumDescriptions": [
+            "Use the codegraph Python CLI via MCP (full feature set; requires a Python install).",
+            "Use the built-in in-process Node/WASM backend — no Python required (Python sources + core read tools; preview)."
+          ],
+          "default": "python",
+          "description": "Which graph backend to use. 'native' needs no external install and runs in-process; 'python' uses the codegraph CLI for the full feature set."
+        },
         "codegraph.pythonPath": {
           "type": "string",
           "default": "",
@@ -78,7 +98,11 @@
         },
         "codegraph.transport": {
           "type": "string",
-          "enum": ["auto", "sse", "stdio"],
+          "enum": [
+            "auto",
+            "sse",
+            "stdio"
+          ],
           "default": "auto",
           "description": "MCP transport. 'auto' probes for a running SSE server first (shared with Claude Code desktop), then falls back to spawning a private stdio subprocess. 'sse' requires a running server. 'stdio' always spawns a subprocess."
         },
@@ -96,14 +120,26 @@
         "modelDescription": "Find where a code symbol (function, class, type) is defined in the codebase. Returns file path and line number.",
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "findSymbol",
-        "tags": ["codegraph", "navigation"],
+        "tags": [
+          "codegraph",
+          "navigation"
+        ],
         "inputSchema": {
           "type": "object",
           "properties": {
-            "symbol_name": { "type": "string", "description": "Name of the symbol to find" },
-            "kind": { "type": "string", "description": "Symbol kind: function|class|type|file|any", "default": "any" }
+            "symbol_name": {
+              "type": "string",
+              "description": "Name of the symbol to find"
+            },
+            "kind": {
+              "type": "string",
+              "description": "Symbol kind: function|class|type|file|any",
+              "default": "any"
+            }
           },
-          "required": ["symbol_name"]
+          "required": [
+            "symbol_name"
+          ]
         }
       },
       {
@@ -112,14 +148,26 @@
         "modelDescription": "Find all callers of a function or method. Returns a list of call sites with file and line.",
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "findCallers",
-        "tags": ["codegraph", "navigation"],
+        "tags": [
+          "codegraph",
+          "navigation"
+        ],
         "inputSchema": {
           "type": "object",
           "properties": {
-            "symbol_name": { "type": "string", "description": "Function or method name" },
-            "depth": { "type": "number", "description": "How many levels of callers to traverse", "default": 1 }
+            "symbol_name": {
+              "type": "string",
+              "description": "Function or method name"
+            },
+            "depth": {
+              "type": "number",
+              "description": "How many levels of callers to traverse",
+              "default": 1
+            }
           },
-          "required": ["symbol_name"]
+          "required": [
+            "symbol_name"
+          ]
         }
       },
       {
@@ -128,14 +176,25 @@
         "modelDescription": "Get direct and transitive imports/dependencies of a file or module.",
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "getDependencies",
-        "tags": ["codegraph"],
+        "tags": [
+          "codegraph"
+        ],
         "inputSchema": {
           "type": "object",
           "properties": {
-            "file_path": { "type": "string", "description": "Relative file path" },
-            "depth": { "type": "number", "description": "Traversal depth", "default": 2 }
+            "file_path": {
+              "type": "string",
+              "description": "Relative file path"
+            },
+            "depth": {
+              "type": "number",
+              "description": "Traversal depth",
+              "default": 2
+            }
           },
-          "required": ["file_path"]
+          "required": [
+            "file_path"
+          ]
         }
       },
       {
@@ -144,11 +203,18 @@
         "modelDescription": "Show recent git commits and the symbols they impacted.",
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "recentChanges",
-        "tags": ["codegraph", "git"],
+        "tags": [
+          "codegraph",
+          "git"
+        ],
         "inputSchema": {
           "type": "object",
           "properties": {
-            "limit": { "type": "number", "description": "Number of commits to return", "default": 10 }
+            "limit": {
+              "type": "number",
+              "description": "Number of commits to return",
+              "default": 10
+            }
           }
         }
       },
@@ -158,11 +224,17 @@
         "modelDescription": "Show the most active files and functions ranked by PageRank score and commit frequency.",
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "hotPaths",
-        "tags": ["codegraph"],
+        "tags": [
+          "codegraph"
+        ],
         "inputSchema": {
           "type": "object",
           "properties": {
-            "top_n": { "type": "number", "description": "How many results to return", "default": 20 }
+            "top_n": {
+              "type": "number",
+              "description": "How many results to return",
+              "default": 20
+            }
           }
         }
       },
@@ -172,13 +244,21 @@
         "modelDescription": "Find test functions that cover a given symbol.",
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "testCoverage",
-        "tags": ["codegraph", "testing"],
+        "tags": [
+          "codegraph",
+          "testing"
+        ],
         "inputSchema": {
           "type": "object",
           "properties": {
-            "symbol_name": { "type": "string", "description": "Symbol to check coverage for" }
+            "symbol_name": {
+              "type": "string",
+              "description": "Symbol to check coverage for"
+            }
           },
-          "required": ["symbol_name"]
+          "required": [
+            "symbol_name"
+          ]
         }
       },
       {
@@ -187,11 +267,16 @@
         "modelDescription": "List all public (non-private) exported symbols for a file or the entire repo.",
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "publicApi",
-        "tags": ["codegraph"],
+        "tags": [
+          "codegraph"
+        ],
         "inputSchema": {
           "type": "object",
           "properties": {
-            "file_path": { "type": "string", "description": "Relative file path (optional, omit for all files)" }
+            "file_path": {
+              "type": "string",
+              "description": "Relative file path (optional, omit for all files)"
+            }
           }
         }
       },
@@ -201,12 +286,20 @@
         "modelDescription": "List all TODO, FIXME, HACK, BUG comments in the codebase with file and line.",
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "todos",
-        "tags": ["codegraph"],
+        "tags": [
+          "codegraph"
+        ],
         "inputSchema": {
           "type": "object",
           "properties": {
-            "kind": { "type": "string", "description": "Filter by kind: TODO|FIXME|HACK|BUG|NOTE" },
-            "limit": { "type": "number", "default": 50 }
+            "kind": {
+              "type": "string",
+              "description": "Filter by kind: TODO|FIXME|HACK|BUG|NOTE"
+            },
+            "limit": {
+              "type": "number",
+              "default": 50
+            }
           }
         }
       },
@@ -216,14 +309,24 @@
         "modelDescription": "Full-text search over symbol names and docstrings using FTS5.",
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "search",
-        "tags": ["codegraph"],
+        "tags": [
+          "codegraph"
+        ],
         "inputSchema": {
           "type": "object",
           "properties": {
-            "query": { "type": "string", "description": "Search terms" },
-            "limit": { "type": "number", "default": 20 }
+            "query": {
+              "type": "string",
+              "description": "Search terms"
+            },
+            "limit": {
+              "type": "number",
+              "default": 20
+            }
           },
-          "required": ["query"]
+          "required": [
+            "query"
+          ]
         }
       },
       {
@@ -232,7 +335,10 @@
         "modelDescription": "Show which architectural layer each file belongs to (presentation, business, data, etc).",
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "architecturalLayers",
-        "tags": ["codegraph", "architecture"],
+        "tags": [
+          "codegraph",
+          "architecture"
+        ],
         "inputSchema": {
           "type": "object",
           "properties": {}
@@ -244,14 +350,24 @@
         "modelDescription": "Blast radius analysis: what code would break or need changes if a symbol is modified.",
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "impactAnalysis",
-        "tags": ["codegraph"],
+        "tags": [
+          "codegraph"
+        ],
         "inputSchema": {
           "type": "object",
           "properties": {
-            "symbol_name": { "type": "string", "description": "Symbol to analyze impact for" },
-            "max_depth": { "type": "number", "default": 3 }
+            "symbol_name": {
+              "type": "string",
+              "description": "Symbol to analyze impact for"
+            },
+            "max_depth": {
+              "type": "number",
+              "default": 3
+            }
           },
-          "required": ["symbol_name"]
+          "required": [
+            "symbol_name"
+          ]
         }
       },
       {
@@ -260,7 +376,10 @@
         "modelDescription": "Show naming conventions, coding patterns, and anti-patterns detected in the codebase.",
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "conventions",
-        "tags": ["codegraph", "standards"],
+        "tags": [
+          "codegraph",
+          "standards"
+        ],
         "inputSchema": {
           "type": "object",
           "properties": {}
@@ -275,15 +394,42 @@
         "description": "Query the codeGraph knowledge graph — find symbols, trace errors, understand architecture.",
         "isSticky": true,
         "commands": [
-          { "name": "symbol",    "description": "Look up where a symbol is defined — @codegraph /symbol UserRouter" },
-          { "name": "callers",   "description": "Find what calls a function — @codegraph /callers process_payment" },
-          { "name": "impact",    "description": "Blast radius of changing a symbol — @codegraph /impact DatabaseClient" },
-          { "name": "deps",      "description": "Show file dependencies — @codegraph /deps src/api/routes.py" },
-          { "name": "hotspots",  "description": "Show high-churn complex files — @codegraph /hotspots" },
-          { "name": "overview",  "description": "Repository architecture overview — @codegraph /overview" },
-          { "name": "search",    "description": "Full-text search — @codegraph /search payment processing" },
-          { "name": "todos",     "description": "List open TODOs and FIXMEs — @codegraph /todos" },
-          { "name": "errors",    "description": "Trace the current error in the editor — @codegraph /errors" }
+          {
+            "name": "symbol",
+            "description": "Look up where a symbol is defined — @codegraph /symbol UserRouter"
+          },
+          {
+            "name": "callers",
+            "description": "Find what calls a function — @codegraph /callers process_payment"
+          },
+          {
+            "name": "impact",
+            "description": "Blast radius of changing a symbol — @codegraph /impact DatabaseClient"
+          },
+          {
+            "name": "deps",
+            "description": "Show file dependencies — @codegraph /deps src/api/routes.py"
+          },
+          {
+            "name": "hotspots",
+            "description": "Show high-churn complex files — @codegraph /hotspots"
+          },
+          {
+            "name": "overview",
+            "description": "Repository architecture overview — @codegraph /overview"
+          },
+          {
+            "name": "search",
+            "description": "Full-text search — @codegraph /search payment processing"
+          },
+          {
+            "name": "todos",
+            "description": "List open TODOs and FIXMEs — @codegraph /todos"
+          },
+          {
+            "name": "errors",
+            "description": "Trace the current error in the editor — @codegraph /errors"
+          }
         ]
       }
     ],
@@ -318,6 +464,10 @@
   },
   "dependencies": {
     "3d-force-graph": "^1.73.0",
-    "three": "^0.165.0"
+    "graphology": "^0.26.0",
+    "graphology-metrics": "^2.4.0",
+    "three": "^0.165.0",
+    "tree-sitter-wasms": "^0.1.13",
+    "web-tree-sitter": "^0.24.4"
   }
 }

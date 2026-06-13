@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { McpClient } from '../backend/mcp-client';
+import type { Backend } from '../native/types';
 
 const PARTICIPANT_ID = 'codegraph.assistant';
 
@@ -9,7 +9,7 @@ function md(text: string): vscode.MarkdownString {
   return m;
 }
 
-async function safeCall(client: McpClient, tool: string, args: Record<string, unknown>): Promise<unknown> {
+async function safeCall(client: Backend, tool: string, args: Record<string, unknown>): Promise<unknown> {
   if (!client.ready) {
     throw new Error('codeGraph MCP server is not running. Use "codeGraph: Initialize / Rebuild Graph" first.');
   }
@@ -18,7 +18,7 @@ async function safeCall(client: McpClient, tool: string, args: Record<string, un
 
 export function registerChatParticipant(
   context: vscode.ExtensionContext,
-  client: McpClient,
+  client: Backend,
 ): void {
   const participant = vscode.chat.createChatParticipant(
     PARTICIPANT_ID,

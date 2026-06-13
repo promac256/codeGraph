@@ -1,12 +1,12 @@
 import * as vscode from 'vscode';
-import { McpClient } from '../backend/mcp-client';
+import type { Backend } from '../native/types';
 import { GraphWebviewPanel } from '../graph/webview';
 
 let _debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
 export function registerDiagnosticsWatcher(
   context: vscode.ExtensionContext,
-  client: McpClient,
+  client: Backend,
 ): void {
   const watcher = vscode.languages.onDidChangeDiagnostics(async (e) => {
     const config = vscode.workspace.getConfiguration('codegraph');
@@ -23,7 +23,7 @@ export function registerDiagnosticsWatcher(
 
 async function _processDiagnostics(
   e: vscode.DiagnosticChangeEvent,
-  client: McpClient,
+  client: Backend,
 ): Promise<void> {
   const panel = GraphWebviewPanel.instance;
 
