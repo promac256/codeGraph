@@ -18,6 +18,7 @@ import * as http from 'http';
 import * as path from 'path';
 import { ChildProcess, spawn } from 'child_process';
 import * as vscode from 'vscode';
+import type { Backend } from '../native/types';
 
 export type Transport = 'auto' | 'sse' | 'stdio';
 
@@ -26,7 +27,7 @@ interface PendingCall {
   reject: (e: Error) => void;
 }
 
-export class McpClient {
+export class McpClient implements Backend {
   private readonly repoPath: string;
   private activeTransport: 'sse' | 'stdio' | null = null;
   private _ready = false;

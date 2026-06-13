@@ -1,17 +1,17 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { McpClient } from '../backend/mcp-client';
+import type { Backend } from '../native/types';
 
 export class GraphWebviewPanel {
   private static _instance: GraphWebviewPanel | null = null;
 
   private readonly _panel: vscode.WebviewPanel;
   private readonly _extensionUri: vscode.Uri;
-  private readonly _client: McpClient;
+  private readonly _client: Backend;
   private _disposables: vscode.Disposable[] = [];
   private _currentGraph: GraphData | null = null;
 
-  static show(extensionUri: vscode.Uri, client: McpClient): GraphWebviewPanel {
+  static show(extensionUri: vscode.Uri, client: Backend): GraphWebviewPanel {
     if (GraphWebviewPanel._instance) {
       GraphWebviewPanel._instance._panel.reveal(vscode.ViewColumn.Two);
       return GraphWebviewPanel._instance;
@@ -25,7 +25,7 @@ export class GraphWebviewPanel {
     return GraphWebviewPanel._instance;
   }
 
-  private constructor(extensionUri: vscode.Uri, client: McpClient) {
+  private constructor(extensionUri: vscode.Uri, client: Backend) {
     this._extensionUri = extensionUri;
     this._client = client;
 

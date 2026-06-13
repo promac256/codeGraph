@@ -3,7 +3,10 @@ node_modules/**
 src/**
 webview/**
 out/**
+scripts/**
+dist/native-smoke.cjs
 *.map
 tsconfig.json
+tsconfig.webview.json
 esbuild.config.js
 .eslintrc.json

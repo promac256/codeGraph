@@ -1,7 +1,23 @@
 const esbuild = require('esbuild');
+const fs = require('fs');
 const path = require('path');
 
 const watch = process.argv.includes('--watch');
+
+// Copy the WASM runtime + grammars the native backend loads at runtime into
+// dist/wasm so they ship inside the .vsix.
+function copyWasm() {
+  const outDir = path.join(__dirname, 'dist', 'wasm');
+  fs.mkdirSync(outDir, { recursive: true });
+  const core = path.join(__dirname, 'node_modules', 'web-tree-sitter', 'tree-sitter.wasm');
+  if (fs.existsSync(core)) fs.copyFileSync(core, path.join(outDir, 'tree-sitter.wasm'));
+  const grammarsDir = path.join(__dirname, 'node_modules', 'tree-sitter-wasms', 'out');
+  const grammars = ['python']; // spike: Python; add languages here as parsers land
+  for (const g of grammars) {
+    const src = path.join(grammarsDir, `tree-sitter-${g}.wasm`);
+    if (fs.existsSync(src)) fs.copyFileSync(src, path.join(outDir, `tree-sitter-${g}.wasm`));
+  }
+}
 
 const extensionConfig = {
   entryPoints: ['src/extension.ts'],
@@ -31,6 +47,7 @@ const webviewConfig = {
 };
 
 async function build() {
+  copyWasm();
   if (watch) {
     const extCtx = await esbuild.context(extensionConfig);
     const webCtx = await esbuild.context(webviewConfig);

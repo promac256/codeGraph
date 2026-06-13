@@ -1,14 +1,18 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { McpClient } from './backend/mcp-client';
+import { NativeBackend, defaultWasmPaths } from './native/nativeBackend';
+import type { Backend } from './native/types';
 import { registerCopilotTools } from './copilot/tools';
 import { registerChatParticipant } from './copilot/participant';
 import { GraphWebviewPanel } from './graph/webview';
 import { registerDiagnosticsWatcher } from './editor/diagnostics';
 
-let mcpClient: McpClient | null = null;
+let mcpClient: Backend | null = null;
+let extensionPath = '';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
+  extensionPath = context.extensionPath;
   const repoPath = getRepoPath();
   if (repoPath) {
     mcpClient = await startClient(repoPath);
@@ -30,8 +34,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('codegraph.initGraph', async () => {
       const rp = getRepoPath();
       if (!rp) { vscode.window.showErrorMessage('codeGraph: No workspace folder open.'); return; }
-      await runCodegraphInTerminal(rp, ['init', rp, '--workers', '8']);
-      // Restart client so it reloads the freshly built graph
+      const native = vscode.workspace.getConfiguration('codegraph').get<string>('backend', 'python') === 'native';
+      // Native backend builds in-memory on start; Python backend needs the CLI.
+      if (!native) await runCodegraphInTerminal(rp, ['init', rp, '--workers', '8']);
       mcpClient?.dispose();
       mcpClient = await startClient(rp);
       vscode.window.showInformationMessage('codeGraph: Graph built successfully.');
@@ -93,16 +98,22 @@ export function deactivate(): void {
 // Helpers
 // ---------------------------------------------------------------------------
 
-async function startClient(repoPath: string): Promise<McpClient> {
-  const client = new McpClient(repoPath);
+async function startClient(repoPath: string): Promise<Backend> {
+  const mode = vscode.workspace.getConfiguration('codegraph').get<string>('backend', 'python');
+  const client: Backend = mode === 'native'
+    ? new NativeBackend(repoPath, defaultWasmPaths(extensionPath))
+    : new McpClient(repoPath);
   try {
     await client.start();
-    const label = client.transport === 'sse'
-      ? `codeGraph: connected via SSE (shared server on port ${getPort()})`
-      : 'codeGraph: started private MCP server (stdio)';
+    const label =
+      client.transport === 'native'
+        ? 'codeGraph: native in-process backend ready (no Python required)'
+        : client.transport === 'sse'
+          ? `codeGraph: connected via SSE (shared server on port ${getPort()})`
+          : 'codeGraph: started private MCP server (stdio)';
     vscode.window.setStatusBarMessage(label, 5000);
   } catch (err) {
-    vscode.window.showWarningMessage(`codeGraph: MCP server failed to start — ${err}. Run "codeGraph: Initialize / Rebuild Graph".`);
+    vscode.window.showWarningMessage(`codeGraph: backend failed to start — ${err}. Run "codeGraph: Initialize / Rebuild Graph".`);
   }
   return client;
 }

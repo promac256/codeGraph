@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { McpClient } from '../backend/mcp-client';
+import type { Backend } from '../native/types';
 
 type ToolInput = Record<string, unknown>;
 type InvokeOpts = vscode.LanguageModelToolInvocationOptions<ToolInput>;
@@ -10,7 +10,7 @@ function makeToolResult(content: unknown): vscode.LanguageModelToolResult {
 }
 
 async function safecall(
-  client: McpClient,
+  client: Backend,
   tool: string,
   args: ToolInput,
 ): Promise<vscode.LanguageModelToolResult> {
@@ -27,7 +27,7 @@ async function safecall(
 
 export function registerCopilotTools(
   context: vscode.ExtensionContext,
-  client: McpClient,
+  client: Backend,
 ): void {
   const tools: vscode.Disposable[] = [
 
