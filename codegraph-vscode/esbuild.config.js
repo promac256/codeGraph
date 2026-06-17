@@ -12,7 +12,7 @@ function copyWasm() {
   const core = path.join(__dirname, 'node_modules', 'web-tree-sitter', 'tree-sitter.wasm');
   if (fs.existsSync(core)) fs.copyFileSync(core, path.join(outDir, 'tree-sitter.wasm'));
   const grammarsDir = path.join(__dirname, 'node_modules', 'tree-sitter-wasms', 'out');
-  const grammars = ['python']; // spike: Python; add languages here as parsers land
+  const grammars = ['python', 'go', 'rust', 'java', 'cpp', 'typescript'];
   for (const g of grammars) {
     const src = path.join(grammarsDir, `tree-sitter-${g}.wasm`);
     if (fs.existsSync(src)) fs.copyFileSync(src, path.join(outDir, `tree-sitter-${g}.wasm`));

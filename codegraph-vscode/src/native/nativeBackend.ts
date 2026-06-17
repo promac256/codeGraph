@@ -11,8 +11,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 import Parser from 'web-tree-sitter';
 import { GraphStore } from './graph';
+import { parseGeneric, type LangSpec } from './genericParser';
+import { LANG_SPECS, specForFile } from './langSpecs';
 import { PythonParser } from './pythonParser';
-import type { Backend, GEdge, GNode, ParseResult } from './types';
+import type { Backend, GNode, ParseResult } from './types';
 
 const SKIP_DIRS = new Set([
   '.git', 'node_modules', '__pycache__', '.venv', 'venv', 'env', 'dist',
@@ -43,27 +45,43 @@ export class NativeBackend implements Backend {
 
   async start(): Promise<void> {
     await Parser.init({ locateFile: () => this.opts.coreWasmPath });
-    const pyLang = await Parser.Language.load(path.join(this.opts.wasmDir, 'tree-sitter-python.wasm'));
-    const parser = new Parser();
-    parser.setLanguage(pyLang);
+
+    // Load every grammar whose wasm shipped; skip any that's missing.
+    const load = async (wasm: string): Promise<Parser | null> => {
+      const p = path.join(this.opts.wasmDir, wasm);
+      if (!fs.existsSync(p)) return null;
+      const parser = new Parser();
+      parser.setLanguage(await Parser.Language.load(p));
+      return parser;
+    };
+
+    const pyParser = await load('tree-sitter-python.wasm');
     const py = new PythonParser();
+    const specParsers = new Map<LangSpec, Parser>();
+    for (const spec of LANG_SPECS) {
+      const parser = await load(spec.grammarWasm);
+      if (parser) specParsers.set(spec, parser);
+    }
 
     const results: ParseResult[] = [];
+    const ingestResult = (rel: string, res: ParseResult) => {
+      results.push(res);
+      for (const t of res.todos) this.allTodos.push({ file: rel, ...t });
+    };
+
     for (const file of this.walk(this.repoPath)) {
-      if (!file.endsWith('.py') && !file.endsWith('.pyi')) continue;
+      const rel = path.relative(this.repoPath, file).replace(/\\/g, '/');
       let source: string;
       try { source = fs.readFileSync(file, 'utf8'); } catch { continue; }
-      let tree: Parser.Tree | null = null;
-      try {
-        tree = parser.parse(source);
-        if (tree) {
-          const rel = path.relative(this.repoPath, file).replace(/\\/g, '/');
-          const res = py.parse(tree, rel, source);
-          results.push(res);
-          for (const t of res.todos) this.allTodos.push({ file: rel, ...t });
-        }
-      } catch { /* skip unparseable file */ } finally {
-        tree?.delete();
+
+      if (pyParser && (file.endsWith('.py') || file.endsWith('.pyi'))) {
+        this.tryParse(pyParser, source, (tree) => ingestResult(rel, py.parse(tree, rel, source)));
+        continue;
+      }
+      const spec = specForFile(file);
+      const parser = spec ? specParsers.get(spec) : undefined;
+      if (spec && parser) {
+        this.tryParse(parser, source, (tree) => ingestResult(rel, parseGeneric(spec, tree, rel, source)));
       }
     }
 
@@ -72,6 +90,16 @@ export class NativeBackend implements Backend {
     this.store.computePageRank();
     this.store.ingestGitChurn(this.repoPath);
     this._ready = true;
+  }
+
+  private tryParse(parser: Parser, source: string, use: (tree: Parser.Tree) => void): void {
+    let tree: Parser.Tree | null = null;
+    try {
+      tree = parser.parse(source);
+      if (tree) use(tree);
+    } catch { /* skip unparseable file */ } finally {
+      tree?.delete();
+    }
   }
 
   dispose(): void { this._ready = false; this.store = new GraphStore(); }

@@ -38,6 +38,14 @@ async function main() {
   // sanity: the exists() stdlib-collision must NOT have phantom callers
   const ec = (await backend.call('codegraph_find_callers', { symbol_name: 'exists' })) as any;
   console.log(`find_callers(exists): ${ec.count} (should be small — builtin suppression)`);
+
+  // --- cross-language coverage ---
+  const tsSym = (await backend.call('codegraph_find_symbol', { name: 'NativeBackend' })) as any;
+  console.log(`[ts] find_symbol(NativeBackend): ${tsSym.matches.map((m: any) => m.file + ':' + m.line).join(', ')}`);
+  const tsCallers = (await backend.call('codegraph_find_callers', { symbol_name: 'parseGeneric' })) as any;
+  console.log(`[ts] find_callers(parseGeneric): ${tsCallers.count} -> ${tsCallers.callers.map((c: any) => c.name).join(', ')}`);
+  const javaSym = (await backend.call('codegraph_find_symbol', { name: 'Animal' })) as any;
+  console.log(`[java/cpp] find_symbol(Animal): ${javaSym.count} matches across ${[...new Set(javaSym.matches.map((m: any) => m.file))].join(', ')}`);
 }
 
 main().catch((e) => { console.error('SMOKE FAILED:', e); process.exit(1); });
