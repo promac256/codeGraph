@@ -26,7 +26,8 @@ instead of a full-repo scan.
 - **MCP server** (FastMCP) over stdio or SSE — shareable between Claude Code
   and the VS Code extension.
 - **VS Code extension** with a `@codegraph` Copilot participant and an
-  interactive 3D graph view.
+  interactive 3D graph view — runnable with **no Python install** via a
+  built-in Node/WASM backend (all 6 languages, in-process).
 
 ## Install
 
@@ -81,11 +82,37 @@ server that Claude Code and the VS Code extension can both connect to.
 ```bash
 cd codegraph-vscode
 npm install
-npm run bundle      # production build -> dist/
+npm run bundle      # production build -> dist/ (incl. WASM grammars)
 ```
 
-Activates on startup, spawns the Python server as a stdio subprocess by
-default (or connects to a running SSE server with `codegraph.transport: "sse"`).
+The extension activates on startup and offers a `@codegraph` Copilot chat
+participant, Copilot language-model tools, error tracing, and a 3D graph view.
+
+### Two backends (`codegraph.backend`)
+
+The extension can source its graph from either backend, selectable in settings:
+
+- **`python`** (default) — talks to the `codegraph` CLI over MCP (a stdio
+  subprocess, or a shared `--transport sse` server via `codegraph.transport`).
+  Full feature set (LLM enrichment, diff, PR mining), but requires a Python
+  install with `codegraph` available.
+- **`native`** — a built-in **Node/WASM backend that runs in-process with no
+  Python**. Parses all six languages with `web-tree-sitter`, builds the graph
+  in memory, and answers the same tools. Ideal for a zero-install setup;
+  indexing runs on activation / "codeGraph: Initialize / Rebuild Graph".
+
+The native backend covers the core read tools (find symbol/callers, impact
+analysis, hot paths, dependencies, search, public API, architectural layers,
+todos). Enrichment, diff, PR mining, and convention/test-coverage mining
+remain CLI-only — use the `python` backend for those.
+
+### Install the packaged extension
+
+```bash
+cd codegraph-vscode
+npx @vscode/vsce package --no-dependencies   # -> codegraph-0.1.0.vsix
+code --install-extension codegraph-0.1.0.vsix
+```
 
 ## Configuration
 
