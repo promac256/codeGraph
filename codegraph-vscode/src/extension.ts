@@ -7,6 +7,7 @@ import { registerCopilotTools } from './copilot/tools';
 import { registerChatParticipant } from './copilot/participant';
 import { GraphWebviewPanel } from './graph/webview';
 import { registerDiagnosticsWatcher } from './editor/diagnostics';
+import { registerLanguageProviders } from './editor/languageProviders';
 
 let mcpClient: Backend | null = null;
 let extensionPath = '';
@@ -143,6 +144,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     registerChatParticipant(context, mcpClient);
     registerDiagnosticsWatcher(context, mcpClient);
   }
+
+  // Graph-backed Go to Definition / Find References / caller CodeLens.
+  // Uses an accessor because mcpClient is reassigned on rebuild.
+  registerLanguageProviders(context, () => mcpClient);
 
   // Re-init client when workspace changes (debounced — rapid folder churn
   // previously spawned several stdio subprocesses before any was disposed)

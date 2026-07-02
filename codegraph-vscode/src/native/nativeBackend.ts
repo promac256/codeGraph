@@ -180,6 +180,7 @@ export class NativeBackend implements Backend {
       case 'codegraph_overview': return this.overview();
       case 'codegraph_get_dependencies': return this.dependencies(`file:${a.file_path}`);
       case 'codegraph_architectural_layers': return { layers: this.layers() };
+      case 'codegraph_file_symbols': return this.fileSymbols(String(a.file_path ?? ''));
       case 'codegraph_todos': return { todos: this.todos(String(a.kind ?? 'all'), Number(a.limit ?? 50)) };
       case 'codegraph_public_api': return this.publicApi(a.file_path ? `file:${a.file_path}` : null);
       case 'codegraph_recent_changes': return { changes: [] }; // not yet ported (git-log driven)
@@ -307,6 +308,19 @@ export class NativeBackend implements Backend {
   private todos(kind: string, limit: number) {
     const k = kind === 'all' ? null : kind.toUpperCase();
     return this.allTodos.filter((t) => !k || t.kind === k).slice(0, limit);
+  }
+
+  private fileSymbols(rel: string) {
+    const fileId = `file:${rel}`;
+    const symbols = [...this.store.nodes.values()]
+      .filter((n) => n.file === fileId && (n.kind === 'function' || n.kind === 'class'))
+      .map((n) => ({
+        node_id: n.id, name: n.name, kind: n.kind,
+        qualified_name: n.qualifiedName ?? n.name,
+        line_start: n.lineStart ?? 0, line_end: n.lineEnd ?? 0,
+      }))
+      .sort((a, b) => a.line_start - b.line_start);
+    return { file: rel, symbols, count: symbols.length };
   }
 
   private publicApi(fileId: string | null) {

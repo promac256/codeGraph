@@ -136,7 +136,15 @@ export function registerChatParticipant(
           }
         }
       } catch (err) {
-        stream.markdown(md(`**Error:** ${String(err)}`));
+        const message = String(err);
+        if (/not running|not ready|not started/i.test(message)) {
+          stream.markdown(md(
+            'codeGraph has no graph for this workspace yet.\n\n' +
+            '[Build the graph now](command:codegraph.initGraph) and then re-run your query.',
+          ));
+        } else {
+          stream.markdown(md(`**Error:** ${message}`));
+        }
       }
     },
   );
