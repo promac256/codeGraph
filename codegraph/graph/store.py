@@ -115,6 +115,23 @@ class GraphStore:
         for src, dst, kind, meta in cur:
             self.graph.add_edge(src, dst, key=kind, **orjson.loads(meta))
 
+    def data_version(self) -> int:
+        """SQLite change counter that advances whenever *another* connection
+        commits to this database (PRAGMA data_version). Used to detect that a
+        `codegraph update` process has refreshed the graph out from under a
+        long-lived reader (e.g. the MCP server) so it can hot-reload.
+        """
+        return self._db.execute("PRAGMA data_version").fetchone()[0]
+
+    def reload_graph(self) -> None:
+        """Discard the in-memory graph and rebuild it from current DB state.
+
+        Queries read `self.store.graph` fresh on every call, so swapping in a
+        new graph object here is safe for a running server.
+        """
+        self.graph = nx.MultiDiGraph()
+        self.load_graph_to_memory()
+
     def save_snapshot(self, snapshot_path: Path) -> None:
         data = nx.node_link_data(self.graph)
         with gzip.open(snapshot_path, "wb") as f:

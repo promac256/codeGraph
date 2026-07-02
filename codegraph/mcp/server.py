@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import Any
 
 from fastmcp import FastMCP
+
+log = logging.getLogger(__name__)
 
 mcp = FastMCP(
     name="codeGraph",
@@ -20,6 +23,7 @@ mcp = FastMCP(
 _graph_query = None
 _graph_store = None
 _settings = None
+_data_version = None
 
 
 def _resolve_symbol_id(q, name_or_id: str) -> str:
@@ -33,25 +37,38 @@ def _resolve_symbol_id(q, name_or_id: str) -> str:
     return name_or_id
 
 
-_settings = None
-
-
 def _get_query():
-    global _graph_query, _graph_store, _settings  # noqa: PLW0603
-    if _graph_query is not None:
+    """Return the shared GraphQuery, hot-reloading the in-memory graph if a
+    `codegraph update`/`watch` process has committed changes since we last
+    read. This keeps a long-lived Claude Code session fresh without a restart.
+    """
+    global _graph_query, _graph_store, _settings, _data_version  # noqa: PLW0603
+
+    if _graph_query is None:
+        from codegraph.config import Settings
+        from codegraph.graph.queries import GraphQuery
+        from codegraph.graph.store import GraphStore
+
+        repo_path = Path(os.environ.get("CODEGRAPH_REPO_PATH", ".")).resolve()
+        _settings = Settings.from_repo(repo_path)
+        _graph_store = GraphStore(_settings.db_path)
+        _graph_store.open()
+        _graph_store.load_graph_to_memory()
+        _graph_query = GraphQuery(_graph_store)
+        _data_version = _graph_store.data_version()
         return _graph_query
 
-    from codegraph.config import Settings
-    from codegraph.graph.queries import GraphQuery
-    from codegraph.graph.store import GraphStore
+    # Cheap staleness probe on every call (a single PRAGMA); reload only when
+    # another connection has committed.
+    try:
+        current = _graph_store.data_version()
+        if current != _data_version:
+            log.info("graph changed on disk — hot-reloading in-memory graph")
+            _graph_store.reload_graph()
+            _data_version = current
+    except Exception as e:
+        log.warning("staleness check failed, serving cached graph: %s", e)
 
-    repo_path = Path(os.environ.get("CODEGRAPH_REPO_PATH", ".")).resolve()
-    _settings = Settings.from_repo(repo_path)
-
-    _graph_store = GraphStore(_settings.db_path)
-    _graph_store.open()
-    _graph_store.load_graph_to_memory()
-    _graph_query = GraphQuery(_graph_store)
     return _graph_query
 
 
