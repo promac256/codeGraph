@@ -1,0 +1,23 @@
+{
+  "_comment": "Golden invariants BOTH backends (Python CLI and VS Code native/WASM) must satisfy when indexing tests/fixtures. Python side: tests/test_parity.py. Node side: codegraph-vscode/scripts/parity-test.ts (npm run parity). Update deliberately when fixture files or parser semantics change.",
+  "fixture_root": "tests/fixtures",
+  "file_count": 8,
+  "python_models_functions": [
+    "Animal.__init__",
+    "Animal.describe",
+    "Animal.speak",
+    "Cat.__init__",
+    "Cat.speak",
+    "Dog.fetch",
+    "Dog.speak",
+    "create_animal",
+    "fetch_animal_data"
+  ],
+  "animal_class_files": [
+    "c_sample/animals.cpp",
+    "go_sample/models.go",
+    "java_sample/Animals.java",
+    "python_sample/models.py",
+    "rust_sample/animals.rs"
+  ]
+}

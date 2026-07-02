@@ -337,6 +337,63 @@ class GraphStore:
         )
         return [{"file": row[0], "count": row[1]} for row in cur]
 
+    # --- Integrity / doctor helpers -----------------------------------------
+
+    def integrity_check(self) -> str:
+        """Run SQLite's integrity check; returns 'ok' or the failure detail."""
+        row = self._db.execute("PRAGMA integrity_check").fetchone()
+        return row[0] if row else "unknown"
+
+    def fts_probe(self) -> str | None:
+        """Return None if FTS works, else the error message."""
+        try:
+            self._db.execute(
+                "SELECT node_id FROM symbols_fts WHERE symbols_fts MATCH 'a' LIMIT 1"
+            ).fetchone()
+            return None
+        except sqlite3.OperationalError as e:
+            return str(e)
+
+    def orphan_edges(self) -> list[tuple[str, str, str]]:
+        """Edges whose src or dst references a missing node.
+
+        module:/commit:/placeholder targets are intentional non-node ids and
+        are not counted as orphans.
+        """
+        cur = self._db.execute(
+            """SELECT e.src, e.dst, e.kind FROM edges e
+               LEFT JOIN nodes ns ON e.src = ns.node_id
+               LEFT JOIN nodes nd ON e.dst = nd.node_id
+               WHERE (ns.node_id IS NULL
+                      AND e.src NOT LIKE 'module:%' AND e.src NOT LIKE 'commit:%')
+                  OR (nd.node_id IS NULL
+                      AND e.dst NOT LIKE 'module:%' AND e.dst NOT LIKE 'commit:%'
+                      AND e.dst NOT LIKE '%:?::%')"""
+        )
+        return [(r[0], r[1], r[2]) for r in cur]
+
+    def delete_edges(self, edges: list[tuple[str, str, str]]) -> int:
+        self._db.executemany(
+            "DELETE FROM edges WHERE src=? AND dst=? AND kind=?", edges
+        )
+        self._db.commit()
+        return len(edges)
+
+    def rebuild_fts(self) -> int:
+        """Rebuild the FTS index from the nodes table; returns rows indexed."""
+        self._db.execute("DELETE FROM symbols_fts")
+        cur = self._db.execute("SELECT node_id, name, data FROM nodes WHERE name IS NOT NULL")
+        n = 0
+        for node_id, name, data in cur.fetchall():
+            doc = (orjson.loads(data).get("docstring") or "")[:500]
+            self._db.execute(
+                "INSERT INTO symbols_fts(node_id, name, docstring) VALUES(?,?,?)",
+                (node_id, name or "", doc),
+            )
+            n += 1
+        self._db.commit()
+        return n
+
     def get_file_sha(self, path: str) -> str | None:
         row = self._db.execute(
             "SELECT sha256 FROM files WHERE path=?", (path,)

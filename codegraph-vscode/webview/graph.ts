@@ -473,6 +473,10 @@ window.addEventListener('message', (event) => {
       const nodes = (msg.nodes as GNode[]) ?? [];
       const links = (msg.edges as GLink[]) ?? [];
       initGraph(nodes, links);
+      // Surface truncation — never let a capped graph pass as the whole repo.
+      if (msg.truncation) {
+        setStatus(`${nodes.length} nodes · ${links.length} edges — ${String(msg.truncation)}`);
+      }
       break;
     }
 
