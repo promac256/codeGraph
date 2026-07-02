@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import gzip
+import logging
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
+
+log = logging.getLogger(__name__)
 
 import networkx as nx
 import orjson
@@ -220,8 +223,132 @@ class GraphStore:
                 (query, limit),
             )
             return [orjson.loads(row[0]) for row in cur]
-        except sqlite3.OperationalError:
+        except sqlite3.OperationalError as e:
+            log.warning("FTS search failed for %r: %s (run `codegraph doctor`)", query, e)
             return []
+
+    # --- Public write/read helpers ------------------------------------------
+    # These exist so callers outside this module never touch self._db directly:
+    # the store stays the sole owner of the schema, callers stay unit-testable,
+    # and every write funnels through one place.
+
+    def iter_node_data(self, kinds: tuple[str, ...] | None = None) -> Iterator[dict]:
+        """Yield deserialized node data dicts, optionally filtered by kind."""
+        if kinds:
+            placeholders = ",".join("?" * len(kinds))
+            cur = self._db.execute(
+                f"SELECT data FROM nodes WHERE kind IN ({placeholders})", kinds
+            )
+        else:
+            cur = self._db.execute("SELECT data FROM nodes")
+        for (data,) in cur:
+            yield orjson.loads(data)
+
+    def get_node_data(self, node_id: str) -> dict | None:
+        row = self._db.execute(
+            "SELECT data FROM nodes WHERE node_id=?", (node_id,)
+        ).fetchone()
+        return orjson.loads(row[0]) if row else None
+
+    def update_node_data(self, node_id: str, data: dict) -> None:
+        """Replace a node's stored data dict (in-memory graph updated too)."""
+        self._db.execute(
+            "UPDATE nodes SET data=? WHERE node_id=?",
+            (orjson.dumps(data).decode(), node_id),
+        )
+        if node_id in self.graph:
+            self.graph.nodes[node_id].update(data)
+
+    def set_node_attr_bulk(self, attr: str, updates: list[tuple[Any, str]]) -> None:
+        """Set one JSON attribute on many nodes: updates = [(value, node_id)].
+
+        The attr name is interpolated into the json_set path, so it must be a
+        code-supplied identifier — never user input.
+        """
+        if not updates:
+            return
+        self._db.executemany(
+            f"UPDATE nodes SET data=json_set(data,'$.{attr}',?) WHERE node_id=?",
+            updates,
+        )
+        for value, node_id in updates:
+            if node_id in self.graph:
+                self.graph.nodes[node_id][attr] = value
+        self._db.commit()
+
+    def iter_edge_meta(self, kind: str) -> Iterator[dict]:
+        cur = self._db.execute("SELECT meta FROM edges WHERE kind=?", (kind,))
+        for (meta_json,) in cur:
+            try:
+                yield orjson.loads(meta_json)
+            except orjson.JSONDecodeError:
+                log.warning("corrupt edge meta for kind=%s skipped", kind)
+
+    def db_delete_edge(self, src: str, dst: str, kind: str) -> None:
+        """DB-only edge delete (in-memory graph managed separately by caller)."""
+        self._db.execute(
+            "DELETE FROM edges WHERE src=? AND dst=? AND kind=?", (src, dst, kind)
+        )
+
+    def db_upsert_edge(self, src: str, dst: str, kind: str, meta: dict) -> None:
+        """DB-only edge upsert (in-memory graph managed separately by caller)."""
+        self._db.execute(
+            "INSERT OR REPLACE INTO edges(src,dst,kind,meta) VALUES(?,?,?,?)",
+            (src, dst, kind, orjson.dumps(meta).decode()),
+        )
+
+    def insert_commit(self, commit: dict) -> None:
+        self._db.execute(
+            "INSERT OR REPLACE INTO commits(sha,author,ts,message,data) VALUES(?,?,?,?,?)",
+            (
+                commit["sha"],
+                commit.get("author", ""),
+                commit.get("timestamp", 0),
+                commit.get("message", ""),
+                orjson.dumps(commit).decode(),
+            ),
+        )
+
+    def link_file_commit(self, file_id: str, sha: str) -> None:
+        self._db.execute(
+            "INSERT OR IGNORE INTO file_commits(file,sha) VALUES(?,?)", (file_id, sha)
+        )
+
+    def insert_todo(self, node_id: str, file: str, line: int, kind: str, text: str) -> None:
+        self._db.execute(
+            "INSERT OR REPLACE INTO todos(node_id,file,line,kind,text) VALUES(?,?,?,?,?)",
+            (node_id, file, line, kind, text),
+        )
+
+    def count_todos(self) -> int:
+        return self._db.execute("SELECT COUNT(*) FROM todos").fetchone()[0]
+
+    def todo_counts_by_kind(self) -> dict[str, int]:
+        cur = self._db.execute(
+            "SELECT kind, COUNT(*) FROM todos GROUP BY kind ORDER BY COUNT(*) DESC"
+        )
+        return {row[0]: row[1] for row in cur}
+
+    def todo_hotspots(self, limit: int = 10) -> list[dict]:
+        cur = self._db.execute(
+            "SELECT file, COUNT(*) as cnt FROM todos GROUP BY file "
+            "ORDER BY cnt DESC LIMIT ?",
+            (limit,),
+        )
+        return [{"file": row[0], "count": row[1]} for row in cur]
+
+    def get_file_sha(self, path: str) -> str | None:
+        row = self._db.execute(
+            "SELECT sha256 FROM files WHERE path=?", (path,)
+        ).fetchone()
+        return row[0] if row else None
+
+    def record_file(self, path: str, lang: str, sha256: str, line_count: int) -> None:
+        self._db.execute(
+            "INSERT OR REPLACE INTO files(path,lang,sha256,last_analyzed,line_count) "
+            "VALUES(?,?,?,strftime('%s','now'),?)",
+            (path, lang, sha256, line_count),
+        )
 
     def get_callers(self, func_id: str) -> list[str]:
         result = []

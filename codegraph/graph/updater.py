@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from codegraph.graph.builder import GraphBuilder
@@ -64,10 +67,7 @@ class GraphUpdater:
             try:
                 source = path.read_bytes()
                 new_hash = hashlib.sha256(source).hexdigest()
-                existing = self.store._db.execute(
-                    "SELECT sha256 FROM files WHERE path=?", (entry["path"],)
-                ).fetchone()
-                if existing and existing[0] == new_hash:
+                if self.store.get_file_sha(entry["path"]) == new_hash:
                     continue
 
                 parser = self.registry.get_parser(path)
@@ -80,8 +80,9 @@ class GraphUpdater:
                     result = parser.parse(path, source, self.repo_root)
                     self.builder._ingest_parse_result(result)
                 stats["files_updated"] += 1
-            except Exception:
+            except Exception as e:
                 stats["errors"] += 1
+                log.warning("failed to update %s: %s", entry["path"], e)
 
         new_commits = repo.get_commits_since(last_sha, limit=50)
         for c in new_commits:
@@ -100,32 +101,19 @@ class GraphUpdater:
         return stats
 
     def _ingest_commit(self, commit: dict) -> None:
-        import orjson
-
         from codegraph.models import EdgeKind, GraphEdge
 
-        self.store._db.execute(
-            "INSERT OR REPLACE INTO commits(sha,author,ts,message,data) VALUES(?,?,?,?,?)",
-            (
-                commit["sha"],
-                commit.get("author", ""),
-                commit.get("timestamp", 0),
-                commit.get("message", ""),
-                orjson.dumps(commit).decode(),
-            ),
-        )
-        commit_id = f"commit:{commit['sha']}"
-        for file_path in commit.get("files_changed", []):
-            file_id = f"file:{file_path}"
-            self.store._db.execute(
-                "INSERT OR IGNORE INTO file_commits(file,sha) VALUES(?,?)",
-                (file_id, commit["sha"]),
-            )
-            edge = GraphEdge(
-                src=commit_id,
-                dst=file_id,
-                kind=EdgeKind.MODIFIES,
-                meta={"insertions": 0, "deletions": 0},
-            )
-            self.store.upsert_edge(edge)
-        self.store._db.commit()
+        with self.store.transaction():
+            self.store.insert_commit(commit)
+            commit_id = f"commit:{commit['sha']}"
+            for file_path in commit.get("files_changed", []):
+                file_id = f"file:{file_path}"
+                self.store.link_file_commit(file_id, commit["sha"])
+                self.store.upsert_edge(
+                    GraphEdge(
+                        src=commit_id,
+                        dst=file_id,
+                        kind=EdgeKind.MODIFIES,
+                        meta={"insertions": 0, "deletions": 0},
+                    )
+                )

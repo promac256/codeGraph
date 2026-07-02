@@ -11,16 +11,9 @@ if TYPE_CHECKING:
 class TodoExtractor:
     def get_summary(self, store: "GraphStore") -> dict:
         """Return grouped counts of all TODO-style comments."""
-        cur = store._db.execute(
-            "SELECT kind, COUNT(*) FROM todos GROUP BY kind ORDER BY COUNT(*) DESC"
-        )
-        by_kind = {row[0]: row[1] for row in cur}
+        by_kind = store.todo_counts_by_kind()
 
-        cur2 = store._db.execute(
-            "SELECT file, COUNT(*) as cnt FROM todos GROUP BY file "
-            "ORDER BY cnt DESC LIMIT 10"
-        )
-        hottest_files = [{"file": row[0], "count": row[1]} for row in cur2]
+        hottest_files = store.todo_hotspots(limit=10)
 
         total = sum(by_kind.values())
         return {

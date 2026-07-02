@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import concurrent.futures
 import hashlib
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterator
+
+log = logging.getLogger(__name__)
 
 import networkx as nx
 
@@ -114,6 +117,7 @@ class GraphBuilder:
             for future in concurrent.futures.as_completed(futures):
                 if task is not None:
                     progress.advance(task)
+                src_file = futures[future]
                 try:
                     result = future.result()
                     if result is None:
@@ -124,8 +128,11 @@ class GraphBuilder:
                         stats["files_parsed"] += 1
                         if result.errors:
                             stats["errors"] += len(result.errors)
-                except Exception:
+                            for err in result.errors:
+                                log.debug("parse warning in %s: %s", src_file, err)
+                except Exception as e:
                     stats["errors"] += 1
+                    log.warning("failed to ingest %s: %s", src_file, e)
 
         self._resolve_cross_file_references()
         self._compute_derived_metrics()
@@ -158,7 +165,8 @@ class GraphBuilder:
         try:
             source = path.read_bytes()
             return parser.parse(path, source, self.repo_root)
-        except Exception:
+        except Exception as e:
+            log.warning("parser %s crashed on %s: %s", type(parser).__name__, path, e)
             return None
 
     def _ingest_parse_result(self, result: ParseResult) -> None:
@@ -182,28 +190,20 @@ class GraphBuilder:
 
         if result.todos:
             for todo in result.todos:
-                self.store._db.execute(
-                    "INSERT OR REPLACE INTO todos(node_id,file,line,kind,text) "
-                    "VALUES(?,?,?,?,?)",
-                    (
-                        result.file_node.node_id,
-                        result.file_node.path,
-                        todo["line"],
-                        todo["kind"],
-                        todo["text"],
-                    ),
+                self.store.insert_todo(
+                    result.file_node.node_id,
+                    result.file_node.path,
+                    todo["line"],
+                    todo["kind"],
+                    todo["text"],
                 )
 
         # Update files table for change tracking
-        self.store._db.execute(
-            "INSERT OR REPLACE INTO files(path,lang,sha256,last_analyzed,line_count) "
-            "VALUES(?,?,?,strftime('%s','now'),?)",
-            (
-                result.file_node.path,
-                result.file_node.lang,
-                result.file_node.sha256,
-                result.file_node.line_count,
-            ),
+        self.store.record_file(
+            result.file_node.path,
+            result.file_node.lang,
+            result.file_node.sha256,
+            result.file_node.line_count,
         )
 
     def _resolve_cross_file_references(self) -> None:
@@ -252,33 +252,21 @@ class GraphBuilder:
                 else:
                     to_remove.append((src, dst, key))
 
-        import orjson as _orjson
-
         for src, old_dst, key, new_dst, data in to_update:
             try:
                 G.remove_edge(src, old_dst, key=key)
             except Exception:
                 pass
             G.add_edge(src, new_dst, key=key, resolved=True, **data)
-            meta_json = _orjson.dumps({**data, "resolved": True}).decode()
-            self.store._db.execute(
-                "DELETE FROM edges WHERE src=? AND dst=? AND kind=?",
-                (src, old_dst, key),
-            )
-            self.store._db.execute(
-                "INSERT OR REPLACE INTO edges(src,dst,kind,meta) VALUES(?,?,?,?)",
-                (src, new_dst, key, meta_json),
-            )
+            self.store.db_delete_edge(src, old_dst, key)
+            self.store.db_upsert_edge(src, new_dst, key, {**data, "resolved": True})
 
         for src, dst, key in to_remove:
             try:
                 G.remove_edge(src, dst, key=key)
             except Exception:
                 pass
-            self.store._db.execute(
-                "DELETE FROM edges WHERE src=? AND dst=? AND kind=?",
-                (src, dst, key),
-            )
+            self.store.db_delete_edge(src, dst, key)
 
         # Drop placeholder nodes left isolated after resolution/removal.
         for nid in [
@@ -372,22 +360,15 @@ class GraphBuilder:
             # than silently leaving every node at PageRank 0.
             pr = nx.pagerank(rank_graph, alpha=0.85)
         except ImportError:
+            log.debug("scipy not installed; using pure-Python PageRank fallback")
             pr = _pagerank_power_iteration(rank_edges, alpha=0.85)
-        except Exception:
+        except Exception as e:
+            log.warning("PageRank computation failed: %s", e)
             return
 
-        updates = []
-        for nid, score in pr.items():
-            if nid in G.nodes:
-                G.nodes[nid]["pagerank"] = score
-                updates.append((score, nid))
-
-        if updates:
-            self.store._db.executemany(
-                "UPDATE nodes SET data=json_set(data,'$.pagerank',?) WHERE node_id=?",
-                updates,
-            )
-            self.store._db.commit()
+        self.store.set_node_attr_bulk(
+            "pagerank", [(score, nid) for nid, score in pr.items() if nid in G.nodes]
+        )
 
     def _ingest_git_history(self, max_commits: int = 1000) -> int:
         """Walk git history to populate commit rows, MODIFIES edges, and the
@@ -401,57 +382,39 @@ class GraphBuilder:
         """
         import collections
 
-        import orjson
-
         from codegraph.git.local_repo import LocalRepo
         from codegraph.models import EdgeKind, GraphEdge
 
         repo = LocalRepo(self.repo_root)
         commits = repo.get_commits_since(None, limit=max_commits)
         if not commits:
+            log.debug("no git history found at %s", self.repo_root)
             return 0
 
         G = self.store.graph
         counts: collections.Counter = collections.Counter()
-        for c in commits:
-            self.store._db.execute(
-                "INSERT OR REPLACE INTO commits(sha,author,ts,message,data) "
-                "VALUES(?,?,?,?,?)",
-                (
-                    c["sha"],
-                    c.get("author", ""),
-                    c.get("timestamp", 0),
-                    c.get("message", ""),
-                    orjson.dumps(c).decode(),
-                ),
-            )
-            commit_id = f"commit:{c['sha']}"
-            for file_path in c.get("files_changed", []):
-                file_id = f"file:{file_path}"
-                if file_id not in G.nodes:
-                    continue  # file deleted since, or not a parsed source file
-                self.store._db.execute(
-                    "INSERT OR IGNORE INTO file_commits(file,sha) VALUES(?,?)",
-                    (file_id, c["sha"]),
-                )
-                self.store.upsert_edge(
-                    GraphEdge(
-                        src=commit_id,
-                        dst=file_id,
-                        kind=EdgeKind.MODIFIES,
-                        meta={},
+        with self.store.transaction():
+            for c in commits:
+                self.store.insert_commit(c)
+                commit_id = f"commit:{c['sha']}"
+                for file_path in c.get("files_changed", []):
+                    file_id = f"file:{file_path}"
+                    if file_id not in G.nodes:
+                        continue  # file deleted since, or not a parsed source file
+                    self.store.link_file_commit(file_id, c["sha"])
+                    self.store.upsert_edge(
+                        GraphEdge(
+                            src=commit_id,
+                            dst=file_id,
+                            kind=EdgeKind.MODIFIES,
+                            meta={},
+                        )
                     )
-                )
-                counts[file_id] += 1
+                    counts[file_id] += 1
 
-        for file_id, n in counts.items():
-            G.nodes[file_id]["commit_count"] = n
-        if counts:
-            self.store._db.executemany(
-                "UPDATE nodes SET data=json_set(data,'$.commit_count',?) "
-                "WHERE node_id=?",
-                [(n, fid) for fid, n in counts.items()],
-            )
-        self.store.set_config("last_indexed_sha", commits[0]["sha"])
-        self.store._db.commit()
+            self.store.set_config("last_indexed_sha", commits[0]["sha"])
+
+        self.store.set_node_attr_bulk(
+            "commit_count", [(n, fid) for fid, n in counts.items()]
+        )
         return len(commits)

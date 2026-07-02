@@ -256,6 +256,18 @@ function initGraph(nodes: GNode[], links: GLink[]): void {
 
 const tooltip = document.getElementById('tooltip')!;
 
+/** Escape text that originates from user code (symbol names, file paths)
+ *  before interpolating into HTML — a symbol named `<img onerror=…>` must
+ *  render as text, not execute. */
+function esc(s: unknown): string {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function showTooltip(node: GNode | null): void {
   if (!node) {
     tooltip.style.display = 'none';
@@ -264,11 +276,11 @@ function showTooltip(node: GNode | null): void {
   }
   tooltip.style.display = 'block';
   tooltip.innerHTML = `
-    <div class="t-name">${node.label}</div>
-    <div class="t-kind">${node.kind}${node.layer ? ` · ${node.layer}` : ''}</div>
-    ${node.fullPath ? `<div class="t-file">${node.fullPath}</div>` : ''}
-    ${node.complexity != null ? `<div>complexity: ${node.complexity}</div>` : ''}
-    ${node.commits    != null ? `<div>commits: ${node.commits}</div>` : ''}
+    <div class="t-name">${esc(node.label)}</div>
+    <div class="t-kind">${esc(node.kind)}${node.layer ? ` · ${esc(node.layer)}` : ''}</div>
+    ${node.fullPath ? `<div class="t-file">${esc(node.fullPath)}</div>` : ''}
+    ${node.complexity != null ? `<div>complexity: ${Number(node.complexity)}</div>` : ''}
+    ${node.commits    != null ? `<div>commits: ${Number(node.commits)}</div>` : ''}
     ${node.pagerank   != null ? `<div>pagerank: ${Number(node.pagerank).toFixed(5)}</div>` : ''}
     <div class="t-hint">click to open file</div>
   `;

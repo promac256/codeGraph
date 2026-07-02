@@ -244,19 +244,12 @@ class ConventionMiner:
     def _import_patterns(self) -> dict:
         """Find the most frequently imported modules across all files."""
         module_counter: Counter = Counter()
-        cur = self._store._db.execute(
-            "SELECT meta FROM edges WHERE kind='imports'"
-        )
-        for (meta_json,) in cur:
-            try:
-                meta = orjson.loads(meta_json)
-                module = meta.get("module", "")
-                if module:
-                    # Take top-level crate/package only
-                    top = module.split("::")[0].split(".")[0].split("/")[0]
-                    module_counter[top] += 1
-            except Exception:
-                continue
+        for meta in self._store.iter_edge_meta("imports"):
+            module = meta.get("module", "")
+            if module:
+                # Take top-level crate/package only
+                top = module.split("::")[0].split(".")[0].split("/")[0]
+                module_counter[top] += 1
 
         return {
             "top_imports": [
