@@ -12,17 +12,40 @@ export class GraphStore {
   private edges: GEdge[] = [];
   private outIdx = new Map<string, GEdge[]>();
   private inIdx = new Map<string, GEdge[]>();
+  /** Raw (unresolved) parse results per file. Resolution is a pure derivation
+   *  over these, which makes single-file re-indexing correct by construction:
+   *  replace one file's raw entry, re-derive, done. */
+  private rawByFile = new Map<string, ParseResult>();
 
   ingest(results: ParseResult[]): void {
-    for (const r of results) {
-      this.nodes.set(r.fileNode.id, r.fileNode);
-      for (const n of r.nodes) this.nodes.set(n.id, n);
-      for (const e of r.edges) this.edges.push(e);
-    }
+    for (const r of results) this.addFile(r);
   }
 
-  /** Resolve class:?:: and func:?:: placeholder edge targets to real nodes. */
+  /** Add or replace a single file's parse result (call resolveCrossReferences after). */
+  addFile(result: ParseResult): void {
+    this.rawByFile.set(result.fileNode.id, result);
+  }
+
+  /** Remove a file (deleted on disk). Call resolveCrossReferences after. */
+  removeFile(fileId: string): boolean {
+    return this.rawByFile.delete(fileId);
+  }
+
+  get fileCount(): number {
+    return this.rawByFile.size;
+  }
+
+  /** Rebuild the node map and resolve class:?:: / func:?:: placeholder edge
+   *  targets to real nodes — a pure derivation from rawByFile. */
   resolveCrossReferences(): void {
+    this.nodes.clear();
+    const rawEdges: GEdge[] = [];
+    for (const r of this.rawByFile.values()) {
+      this.nodes.set(r.fileNode.id, r.fileNode);
+      for (const n of r.nodes) this.nodes.set(n.id, n);
+      rawEdges.push(...r.edges);
+    }
+
     const classIndex = new Map<string, string[]>();
     const funcIndex = new Map<string, string[]>();
     for (const n of this.nodes.values()) {
@@ -32,7 +55,7 @@ export class GraphStore {
     }
 
     const resolved: GEdge[] = [];
-    for (const e of this.edges) {
+    for (const e of rawEdges) {
       if (typeof e.dst !== 'string' || !e.dst.startsWith('class:?::') && !e.dst.startsWith('func:?::')) {
         resolved.push(e);
         continue;

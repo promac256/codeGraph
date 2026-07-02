@@ -10,13 +10,80 @@ import { registerDiagnosticsWatcher } from './editor/diagnostics';
 
 let mcpClient: Backend | null = null;
 let extensionPath = '';
+let statusBar: vscode.StatusBarItem | null = null;
+
+type GraphState = 'indexing' | 'ready' | 'error' | 'none';
+
+function setStatus(state: GraphState, detail = ''): void {
+  if (!statusBar) return;
+  switch (state) {
+    case 'indexing':
+      statusBar.text = '$(sync~spin) codeGraph: indexing…';
+      statusBar.tooltip = detail || 'Building the knowledge graph';
+      statusBar.command = undefined;
+      break;
+    case 'ready':
+      statusBar.text = `$(type-hierarchy) codeGraph${detail ? `: ${detail}` : ''}`;
+      statusBar.tooltip = 'codeGraph ready — click to open the graph view';
+      statusBar.command = 'codegraph.showGraph';
+      break;
+    case 'error':
+      statusBar.text = '$(warning) codeGraph: error';
+      statusBar.tooltip = `${detail}\nClick to rebuild the graph.`;
+      statusBar.command = 'codegraph.initGraph';
+      break;
+    case 'none':
+      statusBar.text = '$(type-hierarchy) codeGraph: no graph';
+      statusBar.tooltip = 'Click to build the knowledge graph for this workspace';
+      statusBar.command = 'codegraph.initGraph';
+      break;
+  }
+  statusBar.show();
+}
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   extensionPath = context.extensionPath;
+
+  statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 90);
+  context.subscriptions.push(statusBar);
+
+  if ((vscode.workspace.workspaceFolders?.length ?? 0) > 1) {
+    const first = vscode.workspace.workspaceFolders![0].name;
+    vscode.window.showInformationMessage(
+      `codeGraph currently indexes the first workspace folder only ("${first}"). Multi-root support is planned.`,
+    );
+  }
+
   const repoPath = getRepoPath();
   if (repoPath) {
     mcpClient = await startClient(repoPath);
+  } else {
+    setStatus('none');
   }
+
+  // Re-index a file in the native backend when it is saved, so the graph
+  // never goes stale during an editing session. Debounced per-file.
+  const pendingSaves = new Map<string, NodeJS.Timeout>();
+  context.subscriptions.push(
+    vscode.workspace.onDidSaveTextDocument((doc) => {
+      const backend = mcpClient;
+      if (!(backend instanceof NativeBackend) || !backend.ready) return;
+      const fsPath = doc.uri.fsPath;
+      clearTimeout(pendingSaves.get(fsPath));
+      pendingSaves.set(
+        fsPath,
+        setTimeout(async () => {
+          pendingSaves.delete(fsPath);
+          try {
+            const changed = await backend.reindexFile(fsPath);
+            if (changed) setStatus('ready', `${backend.symbolCount} symbols`);
+          } catch (err) {
+            console.error('codeGraph: reindex failed', err);
+          }
+        }, 400),
+      );
+    }),
+  );
 
   // -------------------------------------------------------------------------
   // Commands
@@ -77,12 +144,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     registerDiagnosticsWatcher(context, mcpClient);
   }
 
-  // Re-init client when workspace changes
+  // Re-init client when workspace changes (debounced — rapid folder churn
+  // previously spawned several stdio subprocesses before any was disposed)
+  let workspaceChangeTimer: NodeJS.Timeout | undefined;
   context.subscriptions.push(
-    vscode.workspace.onDidChangeWorkspaceFolders(async () => {
-      mcpClient?.dispose();
-      const rp = getRepoPath();
-      mcpClient = rp ? await startClient(rp) : null;
+    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      clearTimeout(workspaceChangeTimer);
+      workspaceChangeTimer = setTimeout(async () => {
+        mcpClient?.dispose();
+        const rp = getRepoPath();
+        mcpClient = rp ? await startClient(rp) : null;
+        if (!rp) setStatus('none');
+      }, 500);
     }),
   );
 
@@ -104,15 +177,38 @@ async function startClient(repoPath: string): Promise<Backend> {
     ? new NativeBackend(repoPath, defaultWasmPaths(extensionPath))
     : new McpClient(repoPath);
   try {
-    await client.start();
-    const label =
-      client.transport === 'native'
-        ? 'codeGraph: native in-process backend ready (no Python required)'
-        : client.transport === 'sse'
-          ? `codeGraph: connected via SSE (shared server on port ${getPort()})`
-          : 'codeGraph: started private MCP server (stdio)';
-    vscode.window.setStatusBarMessage(label, 5000);
+    setStatus('indexing');
+    if (client instanceof NativeBackend) {
+      // Index with a cancellable progress notification so a large repo
+      // never looks like a hung window.
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Window,
+          title: 'codeGraph: indexing',
+          cancellable: true,
+        },
+        (progress, token) =>
+          client.start({
+            report: (done, total) =>
+              progress.report({ message: `${done}/${total} files` }),
+            isCancelled: () => token.isCancellationRequested,
+          }),
+      );
+      if (!client.ready) {
+        setStatus('none', 'indexing cancelled');
+        return client;
+      }
+      setStatus('ready', `${client.symbolCount} symbols`);
+    } else {
+      await client.start();
+      const label =
+        client.transport === 'sse'
+          ? `SSE :${getPort()}`
+          : 'stdio';
+      setStatus('ready', label);
+    }
   } catch (err) {
+    setStatus('error', String(err));
     vscode.window.showWarningMessage(`codeGraph: backend failed to start — ${err}. Run "codeGraph: Initialize / Rebuild Graph".`);
   }
   return client;

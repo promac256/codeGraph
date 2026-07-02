@@ -46,6 +46,23 @@ async function main() {
   console.log(`[ts] find_callers(parseGeneric): ${tsCallers.count} -> ${tsCallers.callers.map((c: any) => c.name).join(', ')}`);
   const javaSym = (await backend.call('codegraph_find_symbol', { name: 'Animal' })) as any;
   console.log(`[java/cpp] find_symbol(Animal): ${javaSym.count} matches across ${[...new Set(javaSym.matches.map((m: any) => m.file))].join(', ')}`);
+
+  // --- incremental re-index: add a file, see the symbol; delete it, see it gone ---
+  const fs = await import('fs');
+  const tmp = path.join(repo, '__smoke_reindex_tmp__.py');
+  try {
+    fs.writeFileSync(tmp, 'def smoke_reindex_probe():\n    return 42\n');
+    await backend.reindexFile(tmp);
+    const after = (await backend.call('codegraph_find_symbol', { name: 'smoke_reindex_probe' })) as any;
+    console.log(`[reindex] after save: ${after.count} match (expect 1)`);
+    fs.unlinkSync(tmp);
+    await backend.reindexFile(tmp);
+    const gone = (await backend.call('codegraph_find_symbol', { name: 'smoke_reindex_probe' })) as any;
+    console.log(`[reindex] after delete: ${gone.count} matches (expect 0)`);
+    if (after.count !== 1 || gone.count !== 0) throw new Error('reindex assertions failed');
+  } finally {
+    if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
+  }
 }
 
 main().catch((e) => { console.error('SMOKE FAILED:', e); process.exit(1); });
