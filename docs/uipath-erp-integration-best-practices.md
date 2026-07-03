@@ -3,6 +3,7 @@
 **Scope:** Infor BPCS 8.1 · Infor LX 8.4 · Infor VISUAL 10 & 9.0.8 (2 instances) · Microsoft Dynamics AX 4.0 · Microsoft Dynamics NAV 2016 · SAP ECC 6.0 (EHP4) · SAP Business One v10 · Software Arts PC/MRP · Global Shop Solutions · CRT (custom) · Simone (custom)
 
 **Date:** July 2026
+**Related:** [`p2p-platform-functional-spec.md`](./p2p-platform-functional-spec.md) — P2P platform functional decomposition and per-system integration touchpoints built on this report's recommended channels.
 **Method:** Multi-source web research (44 research agents, 22 sources fetched) with adversarial verification of licensing claims, synthesized with UiPath/vendor documentation. Confidence levels are flagged throughout:
 - ✅ **Verified** — survived 3-vote adversarial fact-checking against primary sources
 - 📄 **Sourced** — from official UiPath/vendor documentation or practitioner reports (not independently verified)
