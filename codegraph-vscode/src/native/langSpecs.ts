@@ -15,7 +15,12 @@ const go: LangSpec = {
   lang: 'go',
   grammarWasm: 'tree-sitter-go.wasm',
   extensions: ['.go'],
-  classTypes: [],
+  // Structs and interfaces are class-like (matches the Python Go parser);
+  // plain type aliases are not.
+  classTypes: [
+    { type: 'type_spec', childType: 'struct_type' },
+    { type: 'type_spec', childType: 'interface_type' },
+  ],
   functionTypes: ['function_declaration', 'method_declaration'],
   callTypes: ['call_expression'],
   testRe: /_test\.go$/,

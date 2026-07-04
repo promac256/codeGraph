@@ -112,13 +112,8 @@ class LLMEnricher:
         return anthropic.Anthropic(api_key=api_key)
 
     def _fetch_candidates(self, skip_documented: bool, kinds: tuple[str, ...]) -> list[dict]:
-        placeholders = ",".join("?" * len(kinds))
-        cur = self._store._db.execute(
-            f"SELECT data FROM nodes WHERE kind IN ({placeholders})", kinds
-        )
         candidates = []
-        for (data,) in cur:
-            node = orjson.loads(data)
+        for node in self._store.iter_node_data(kinds):
             if node.get("llm_summary"):
                 continue
             if skip_documented and node.get("docstring"):
@@ -137,19 +132,11 @@ class LLMEnricher:
         return _parse_json_response(message.content[0].text)
 
     def _patch_node(self, node_id: str, summary: str) -> None:
-        row = self._store._db.execute(
-            "SELECT data FROM nodes WHERE node_id=?", (node_id,)
-        ).fetchone()
-        if not row:
+        data = self._store.get_node_data(node_id)
+        if data is None:
             return
-        data = orjson.loads(row[0])
         data["llm_summary"] = summary
-        self._store._db.execute(
-            "UPDATE nodes SET data=? WHERE node_id=?",
-            (orjson.dumps(data).decode(), node_id),
-        )
-        if node_id in self._store.graph:
-            self._store.graph.nodes[node_id]["llm_summary"] = summary
+        self._store.update_node_data(node_id, data)
 
     # ------------------------------------------------------------------
     # Public API

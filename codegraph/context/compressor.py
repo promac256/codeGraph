@@ -38,12 +38,20 @@ class ContextCompressor:
         token_budget: int | None = None,
     ) -> "ContextPack":
         """Return a new ContextPack with focus/role adjustments applied."""
+        # Copy EVERY mutable field explicitly. copy.copy() alone aliases the
+        # nested dicts/lists, so mutating the compressed pack would silently
+        # corrupt the original (and vice versa).
         out = copy.copy(pack)
+        out.repo_overview = dict(pack.repo_overview)
+        out.architectural_layers = {k: list(v) for k, v in pack.architectural_layers.items()}
         out.hot_paths = list(pack.hot_paths)
+        out.recent_changes = list(pack.recent_changes)
         out.public_api_summary = list(pack.public_api_summary)
+        out.top_modules = list(pack.top_modules)
         out.key_classes = list(pack.key_classes)
         out.todos = list(pack.todos)
-        out.recent_changes = list(pack.recent_changes)
+        out.session_notes = list(pack.session_notes)
+        out.pr_patterns = dict(pack.pr_patterns)
         out.focus_context = {}
 
         if token_budget is not None:

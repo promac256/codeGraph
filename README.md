@@ -25,9 +25,13 @@ instead of a full-repo scan.
   (`debug`, `review`, `feature`).
 - **MCP server** (FastMCP) over stdio or SSE — shareable between Claude Code
   and the VS Code extension.
-- **VS Code extension** with a `@codegraph` Copilot participant and an
+- **VS Code extension** with graph-backed Go to Definition / Find References,
+  per-function caller CodeLens, a `@codegraph` Copilot participant, and an
   interactive 3D graph view — runnable with **no Python install** via a
-  built-in Node/WASM backend (all 6 languages, in-process).
+  built-in Node/WASM backend (all 6 languages, in-process, live re-index on
+  save).
+- **`codegraph doctor`** — validate and repair graph health (DB integrity,
+  FTS index, orphan edges, staleness) instead of rebuilding from scratch.
 
 ## Install
 
@@ -64,6 +68,7 @@ or `--no-claude-md` to always use the fallback location.
 | `report` | Interactive HTML report (`--open`) |
 | `serve` | MCP server (`--transport stdio\|sse`, `--port 8765`) |
 | `stats` | Repo statistics and hot-paths heatmap |
+| `doctor` | Graph health check (`--fix` repairs orphan edges + FTS index) |
 | `watch` | Auto-update on git changes |
 | `notes` | Session notes (`--add`, `--category`, `--clear`) |
 | `enrich` | Anthropic API docstring summaries |

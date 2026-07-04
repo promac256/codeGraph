@@ -15,7 +15,10 @@ async function safecall(
   args: ToolInput,
 ): Promise<vscode.LanguageModelToolResult> {
   if (!client.ready) {
-    return makeToolResult({ error: 'codeGraph MCP server is not running. Run "codeGraph: Initialize / Rebuild Graph" first.' });
+    return makeToolResult({
+      error: 'The codeGraph knowledge graph has not been built for this workspace yet.',
+      how_to_fix: 'Ask the user to run the "codeGraph: Initialize / Rebuild Graph" command (or click the codeGraph status bar item), then retry this tool.',
+    });
   }
   try {
     const result = await client.call(tool, args);

@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import gzip
+import logging
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
+
+log = logging.getLogger(__name__)
 
 import networkx as nx
 import orjson
@@ -111,6 +114,23 @@ class GraphStore:
         cur = self._db.execute("SELECT src, dst, kind, meta FROM edges")
         for src, dst, kind, meta in cur:
             self.graph.add_edge(src, dst, key=kind, **orjson.loads(meta))
+
+    def data_version(self) -> int:
+        """SQLite change counter that advances whenever *another* connection
+        commits to this database (PRAGMA data_version). Used to detect that a
+        `codegraph update` process has refreshed the graph out from under a
+        long-lived reader (e.g. the MCP server) so it can hot-reload.
+        """
+        return self._db.execute("PRAGMA data_version").fetchone()[0]
+
+    def reload_graph(self) -> None:
+        """Discard the in-memory graph and rebuild it from current DB state.
+
+        Queries read `self.store.graph` fresh on every call, so swapping in a
+        new graph object here is safe for a running server.
+        """
+        self.graph = nx.MultiDiGraph()
+        self.load_graph_to_memory()
 
     def save_snapshot(self, snapshot_path: Path) -> None:
         data = nx.node_link_data(self.graph)
@@ -220,8 +240,189 @@ class GraphStore:
                 (query, limit),
             )
             return [orjson.loads(row[0]) for row in cur]
-        except sqlite3.OperationalError:
+        except sqlite3.OperationalError as e:
+            log.warning("FTS search failed for %r: %s (run `codegraph doctor`)", query, e)
             return []
+
+    # --- Public write/read helpers ------------------------------------------
+    # These exist so callers outside this module never touch self._db directly:
+    # the store stays the sole owner of the schema, callers stay unit-testable,
+    # and every write funnels through one place.
+
+    def iter_node_data(self, kinds: tuple[str, ...] | None = None) -> Iterator[dict]:
+        """Yield deserialized node data dicts, optionally filtered by kind."""
+        if kinds:
+            placeholders = ",".join("?" * len(kinds))
+            cur = self._db.execute(
+                f"SELECT data FROM nodes WHERE kind IN ({placeholders})", kinds
+            )
+        else:
+            cur = self._db.execute("SELECT data FROM nodes")
+        for (data,) in cur:
+            yield orjson.loads(data)
+
+    def get_node_data(self, node_id: str) -> dict | None:
+        row = self._db.execute(
+            "SELECT data FROM nodes WHERE node_id=?", (node_id,)
+        ).fetchone()
+        return orjson.loads(row[0]) if row else None
+
+    def update_node_data(self, node_id: str, data: dict) -> None:
+        """Replace a node's stored data dict (in-memory graph updated too)."""
+        self._db.execute(
+            "UPDATE nodes SET data=? WHERE node_id=?",
+            (orjson.dumps(data).decode(), node_id),
+        )
+        if node_id in self.graph:
+            self.graph.nodes[node_id].update(data)
+
+    def set_node_attr_bulk(self, attr: str, updates: list[tuple[Any, str]]) -> None:
+        """Set one JSON attribute on many nodes: updates = [(value, node_id)].
+
+        The attr name is interpolated into the json_set path, so it must be a
+        code-supplied identifier — never user input.
+        """
+        if not updates:
+            return
+        self._db.executemany(
+            f"UPDATE nodes SET data=json_set(data,'$.{attr}',?) WHERE node_id=?",
+            updates,
+        )
+        for value, node_id in updates:
+            if node_id in self.graph:
+                self.graph.nodes[node_id][attr] = value
+        self._db.commit()
+
+    def iter_edge_meta(self, kind: str) -> Iterator[dict]:
+        cur = self._db.execute("SELECT meta FROM edges WHERE kind=?", (kind,))
+        for (meta_json,) in cur:
+            try:
+                yield orjson.loads(meta_json)
+            except orjson.JSONDecodeError:
+                log.warning("corrupt edge meta for kind=%s skipped", kind)
+
+    def db_delete_edge(self, src: str, dst: str, kind: str) -> None:
+        """DB-only edge delete (in-memory graph managed separately by caller)."""
+        self._db.execute(
+            "DELETE FROM edges WHERE src=? AND dst=? AND kind=?", (src, dst, kind)
+        )
+
+    def db_upsert_edge(self, src: str, dst: str, kind: str, meta: dict) -> None:
+        """DB-only edge upsert (in-memory graph managed separately by caller)."""
+        self._db.execute(
+            "INSERT OR REPLACE INTO edges(src,dst,kind,meta) VALUES(?,?,?,?)",
+            (src, dst, kind, orjson.dumps(meta).decode()),
+        )
+
+    def insert_commit(self, commit: dict) -> None:
+        self._db.execute(
+            "INSERT OR REPLACE INTO commits(sha,author,ts,message,data) VALUES(?,?,?,?,?)",
+            (
+                commit["sha"],
+                commit.get("author", ""),
+                commit.get("timestamp", 0),
+                commit.get("message", ""),
+                orjson.dumps(commit).decode(),
+            ),
+        )
+
+    def link_file_commit(self, file_id: str, sha: str) -> None:
+        self._db.execute(
+            "INSERT OR IGNORE INTO file_commits(file,sha) VALUES(?,?)", (file_id, sha)
+        )
+
+    def insert_todo(self, node_id: str, file: str, line: int, kind: str, text: str) -> None:
+        self._db.execute(
+            "INSERT OR REPLACE INTO todos(node_id,file,line,kind,text) VALUES(?,?,?,?,?)",
+            (node_id, file, line, kind, text),
+        )
+
+    def count_todos(self) -> int:
+        return self._db.execute("SELECT COUNT(*) FROM todos").fetchone()[0]
+
+    def todo_counts_by_kind(self) -> dict[str, int]:
+        cur = self._db.execute(
+            "SELECT kind, COUNT(*) FROM todos GROUP BY kind ORDER BY COUNT(*) DESC"
+        )
+        return {row[0]: row[1] for row in cur}
+
+    def todo_hotspots(self, limit: int = 10) -> list[dict]:
+        cur = self._db.execute(
+            "SELECT file, COUNT(*) as cnt FROM todos GROUP BY file "
+            "ORDER BY cnt DESC LIMIT ?",
+            (limit,),
+        )
+        return [{"file": row[0], "count": row[1]} for row in cur]
+
+    # --- Integrity / doctor helpers -----------------------------------------
+
+    def integrity_check(self) -> str:
+        """Run SQLite's integrity check; returns 'ok' or the failure detail."""
+        row = self._db.execute("PRAGMA integrity_check").fetchone()
+        return row[0] if row else "unknown"
+
+    def fts_probe(self) -> str | None:
+        """Return None if FTS works, else the error message."""
+        try:
+            self._db.execute(
+                "SELECT node_id FROM symbols_fts WHERE symbols_fts MATCH 'a' LIMIT 1"
+            ).fetchone()
+            return None
+        except sqlite3.OperationalError as e:
+            return str(e)
+
+    def orphan_edges(self) -> list[tuple[str, str, str]]:
+        """Edges whose src or dst references a missing node.
+
+        module:/commit:/placeholder targets are intentional non-node ids and
+        are not counted as orphans.
+        """
+        cur = self._db.execute(
+            """SELECT e.src, e.dst, e.kind FROM edges e
+               LEFT JOIN nodes ns ON e.src = ns.node_id
+               LEFT JOIN nodes nd ON e.dst = nd.node_id
+               WHERE (ns.node_id IS NULL
+                      AND e.src NOT LIKE 'module:%' AND e.src NOT LIKE 'commit:%')
+                  OR (nd.node_id IS NULL
+                      AND e.dst NOT LIKE 'module:%' AND e.dst NOT LIKE 'commit:%'
+                      AND e.dst NOT LIKE '%:?::%')"""
+        )
+        return [(r[0], r[1], r[2]) for r in cur]
+
+    def delete_edges(self, edges: list[tuple[str, str, str]]) -> int:
+        self._db.executemany(
+            "DELETE FROM edges WHERE src=? AND dst=? AND kind=?", edges
+        )
+        self._db.commit()
+        return len(edges)
+
+    def rebuild_fts(self) -> int:
+        """Rebuild the FTS index from the nodes table; returns rows indexed."""
+        self._db.execute("DELETE FROM symbols_fts")
+        cur = self._db.execute("SELECT node_id, name, data FROM nodes WHERE name IS NOT NULL")
+        n = 0
+        for node_id, name, data in cur.fetchall():
+            doc = (orjson.loads(data).get("docstring") or "")[:500]
+            self._db.execute(
+                "INSERT INTO symbols_fts(node_id, name, docstring) VALUES(?,?,?)",
+                (node_id, name or "", doc),
+            )
+            n += 1
+        self._db.commit()
+        return n
+
+    def get_file_sha(self, path: str) -> str | None:
+        row = self._db.execute(
+            "SELECT sha256 FROM files WHERE path=?", (path,)
+        ).fetchone()
+        return row[0] if row else None
+
+    def record_file(self, path: str, lang: str, sha256: str, line_count: int) -> None:
+        self._db.execute(
+            "INSERT OR REPLACE INTO files(path,lang,sha256,last_analyzed,line_count) "
+            "VALUES(?,?,?,strftime('%s','now'),?)",
+            (path, lang, sha256, line_count),
+        )
 
     def get_callers(self, func_id: str) -> list[str]:
         result = []

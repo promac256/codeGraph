@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 from typing import Optional
@@ -17,6 +18,14 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
+
+
+def _setup_logging(verbose: bool) -> None:
+    logging.basicConfig(
+        level=logging.DEBUG if verbose else logging.WARNING,
+        format="%(levelname)s %(name)s: %(message)s",
+        stream=sys.stderr,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -40,6 +49,9 @@ def init(
         False, "--force-claude-md",
         help="Overwrite CLAUDE.md even if it was hand-authored",
     ),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Show per-file parse warnings and debug detail"
+    ),
 ):
     """Initialize and build the complete knowledge graph for a repository."""
     from rich.progress import (
@@ -56,53 +68,63 @@ def init(
     from codegraph.graph.builder import GraphBuilder
     from codegraph.graph.store import GraphStore
     from codegraph.parsers.registry import ParserRegistry
+    from codegraph.utils.lockfile import LockHeldError, repo_lock
 
+    _setup_logging(verbose)
     settings = Settings.from_repo(repo)
     settings.codegraph_dir.mkdir(exist_ok=True)
 
     console.print(f"[bold]codeGraph[/bold] — indexing [cyan]{repo.resolve()}[/cyan]")
 
-    store = GraphStore(settings.db_path)
-    store.open()
-    store.clear_all()
-    store.set_config("repo_name", repo.resolve().name)
+    try:
+        with repo_lock(settings.codegraph_dir):
+            store = GraphStore(settings.db_path)
+            store.open()
+            store.clear_all()
+            store.set_config("repo_name", repo.resolve().name)
 
-    registry = ParserRegistry.default()
-    builder = GraphBuilder(store, registry, repo.resolve(), max_workers=workers)
+            registry = ParserRegistry.default()
+            builder = GraphBuilder(store, registry, repo.resolve(), max_workers=workers)
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TaskProgressColumn(),
-        TimeElapsedColumn(),
-        console=console,
-    ) as progress:
-        stats = builder.build(progress=progress)
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                TimeElapsedColumn(),
+                console=console,
+            ) as progress:
+                stats = builder.build(progress=progress)
 
-    # Annotate architectural layers
-    LayerDetector().annotate_store(store)
+            # Annotate architectural layers
+            LayerDetector().annotate_store(store)
 
-    # Mine conventions
-    from codegraph.enrichment.convention_miner import ConventionMiner
-    ConventionMiner(store).mine_and_save()
+            # Mine conventions
+            from codegraph.enrichment.convention_miner import ConventionMiner
+            ConventionMiner(store).mine_and_save()
 
-    console.print(f"\n[green]Graph built successfully:[/green]")
-    console.print(f"  Files parsed:  {stats['files_parsed']}")
-    console.print(f"  Files skipped: {stats['files_skipped']}")
-    console.print(f"  Nodes:         {stats['nodes']}")
-    console.print(f"  Edges:         {stats['edges']}")
-    console.print(f"  Commits:       {stats.get('commits', 0)}")
-    if stats["errors"]:
-        console.print(f"  [yellow]Errors:        {stats['errors']}[/yellow]")
+            console.print(f"\n[green]Graph built successfully:[/green]")
+            console.print(f"  Files parsed:  {stats['files_parsed']}")
+            console.print(f"  Files skipped: {stats['files_skipped']}")
+            console.print(f"  Nodes:         {stats['nodes']}")
+            console.print(f"  Edges:         {stats['edges']}")
+            console.print(f"  Commits:       {stats.get('commits', 0)}")
+            if stats["errors"]:
+                console.print(
+                    f"  [yellow]Errors:        {stats['errors']}[/yellow]"
+                    + ("" if verbose else "  (re-run with --verbose for detail)")
+                )
 
-    if llm_enrich:
-        _run_enrichment(store, settings, progress_style="bar")
+            if llm_enrich:
+                _run_enrichment(store, settings, progress_style="bar")
 
-    # Generate context pack
-    pack_mode = "off" if no_claude_md else ("force" if force_claude_md else "auto")
-    _generate_pack(store, settings, token_budget=token_budget, mode=pack_mode)
-    store.close()
+            # Generate context pack
+            pack_mode = "off" if no_claude_md else ("force" if force_claude_md else "auto")
+            _generate_pack(store, settings, token_budget=token_budget, mode=pack_mode)
+            store.close()
+    except LockHeldError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +136,9 @@ def init(
 def update(
     repo: Path = typer.Argument(default=Path("."), help="Path to git repo"),
     since: Optional[str] = typer.Option(None, "--since", help="SHA to update from"),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Show per-file update warnings and debug detail"
+    ),
 ):
     """Incrementally update the graph from recent commits."""
     from codegraph.config import Settings
@@ -122,6 +147,62 @@ def update(
     from codegraph.graph.store import GraphStore
     from codegraph.graph.updater import GraphUpdater
     from codegraph.parsers.registry import ParserRegistry
+    from codegraph.utils.lockfile import LockHeldError, repo_lock
+
+    _setup_logging(verbose)
+    settings = Settings.from_repo(repo)
+    if not settings.db_path.exists():
+        console.print("[red]No graph found. Run `codegraph init` first.[/red]")
+        raise typer.Exit(1)
+
+    try:
+        with repo_lock(settings.codegraph_dir):
+            store = GraphStore(settings.db_path)
+            store.open()
+            store.load_graph_to_memory()
+
+            registry = ParserRegistry.default()
+            builder = GraphBuilder(store, registry, repo.resolve())
+            updater = GraphUpdater(store, builder, repo.resolve(), registry)
+
+            console.print(f"[bold]Updating graph[/bold] from [cyan]{since or 'last indexed commit'}[/cyan]...")
+            stats = updater.update_from_commits(since_sha=since)
+
+            LayerDetector().annotate_store(store)
+            from codegraph.enrichment.convention_miner import ConventionMiner
+            ConventionMiner(store).mine_and_save()
+
+            console.print(f"[green]Update complete:[/green]")
+            console.print(f"  Commits processed: {stats['commits_processed']}")
+            console.print(f"  Files updated:     {stats['files_updated']}")
+            console.print(f"  Files deleted:     {stats['files_deleted']}")
+
+            _generate_pack(store, settings)
+            store.close()
+    except LockHeldError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)
+
+
+# ---------------------------------------------------------------------------
+# doctor
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def doctor(
+    repo: Path = typer.Argument(default=Path("."), help="Path to git repo"),
+    fix: bool = typer.Option(False, "--fix", help="Repair what can be repaired (orphan edges, FTS index)"),
+):
+    """Validate graph health: DB integrity, FTS index, orphan edges, staleness.
+
+    Read-only by default; --fix removes orphan edges and rebuilds the FTS
+    index. Previously the only recourse for a corrupt graph was deleting
+    .codegraph and rebuilding from scratch.
+    """
+    from codegraph.config import Settings
+    from codegraph.git.local_repo import LocalRepo
+    from codegraph.graph.store import GraphStore
 
     settings = Settings.from_repo(repo)
     if not settings.db_path.exists():
@@ -130,26 +211,74 @@ def update(
 
     store = GraphStore(settings.db_path)
     store.open()
-    store.load_graph_to_memory()
+    problems = 0
 
-    registry = ParserRegistry.default()
-    builder = GraphBuilder(store, registry, repo.resolve())
-    updater = GraphUpdater(store, builder, repo.resolve(), registry)
+    # 1. SQLite integrity
+    result = store.integrity_check()
+    if result == "ok":
+        console.print("[green]OK[/green] SQLite integrity: ok")
+    else:
+        problems += 1
+        console.print(f"[red]FAIL[/red] SQLite integrity: {result}")
+        console.print("  [dim]The database file is damaged — rebuild with `codegraph init`.[/dim]")
 
-    console.print(f"[bold]Updating graph[/bold] from [cyan]{since or 'last indexed commit'}[/cyan]...")
-    stats = updater.update_from_commits(since_sha=since)
+    # 2. FTS index
+    fts_err = store.fts_probe()
+    if fts_err is None:
+        console.print("[green]OK[/green] FTS index: ok")
+    else:
+        problems += 1
+        console.print(f"[red]FAIL[/red] FTS index: {fts_err}")
+        if fix:
+            n = store.rebuild_fts()
+            console.print(f"  [green]fixed[/green]: rebuilt FTS from {n} symbols")
+        else:
+            console.print("  [dim]run `codegraph doctor --fix` to rebuild it[/dim]")
 
-    LayerDetector().annotate_store(store)
-    from codegraph.enrichment.convention_miner import ConventionMiner
-    ConventionMiner(store).mine_and_save()
+    # 3. Orphan edges
+    orphans = store.orphan_edges()
+    if not orphans:
+        console.print("[green]OK[/green] Edges: no orphans")
+    else:
+        problems += 1
+        console.print(f"[yellow]WARN[/yellow] Edges: {len(orphans)} orphan(s) referencing missing nodes")
+        if fix:
+            store.delete_edges(orphans)
+            console.print(f"  [green]fixed[/green]: removed {len(orphans)} orphan edge(s)")
+        else:
+            console.print("  [dim]run `codegraph doctor --fix` to remove them[/dim]")
 
-    console.print(f"[green]Update complete:[/green]")
-    console.print(f"  Commits processed: {stats['commits_processed']}")
-    console.print(f"  Files updated:     {stats['files_updated']}")
-    console.print(f"  Files deleted:     {stats['files_deleted']}")
+    # 4. Staleness vs git HEAD
+    indexed_sha = store.get_config("last_indexed_sha")
+    head = LocalRepo(repo.resolve()).get_head_sha()
+    if head and indexed_sha == head:
+        console.print(f"[green]OK[/green] Freshness: graph is at HEAD ({head[:8]})")
+    elif head and indexed_sha:
+        console.print(
+            f"[yellow]WARN[/yellow] Freshness: graph at {indexed_sha[:8]}, HEAD is {head[:8]} "
+            "— run `codegraph update`"
+        )
+    else:
+        console.print("[yellow]WARN[/yellow] Freshness: no indexed commit recorded")
 
-    _generate_pack(store, settings)
+    # 5. Snapshot presence
+    if settings.snapshot_path.exists():
+        console.print("[green]OK[/green] NetworkX snapshot present")
+    else:
+        console.print("[dim]--[/dim] NetworkX snapshot absent (rebuilt from SQLite on load)")
+
+    # 6. Basic counts
+    node_count = store.graph.number_of_nodes() or "?"
+    console.print(
+        f"\n  nodes in DB: {sum(1 for _ in store.iter_node_data())}, "
+        f"todos: {store.count_todos()}"
+    )
     store.close()
+
+    if problems and not fix:
+        console.print(f"\n[yellow]{problems} problem(s) found.[/yellow] Re-run with --fix to repair.")
+        raise typer.Exit(2)
+    console.print("\n[green]Graph is healthy.[/green]" if not problems else "\n[green]Repairs applied.[/green]")
 
 
 # ---------------------------------------------------------------------------
@@ -550,7 +679,7 @@ def stats(
         console.print(table)
 
     todos = q.get_todos(limit=1)
-    total_todos = store._db.execute("SELECT COUNT(*) FROM todos").fetchone()[0]
+    total_todos = store.count_todos()
     console.print(f"\n  Open TODOs: {total_todos}")
     store.close()
 

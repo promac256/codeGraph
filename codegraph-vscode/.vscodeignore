@@ -5,6 +5,7 @@ webview/**
 out/**
 scripts/**
 dist/native-smoke.cjs
+dist/parity-test.cjs
 *.map
 tsconfig.json
 tsconfig.webview.json

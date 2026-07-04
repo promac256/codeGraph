@@ -28,12 +28,20 @@ export interface NativeBackendOptions {
   coreWasmPath: string;
 }
 
+export interface IndexProgress {
+  report?(done: number, total: number): void;
+  isCancelled?(): boolean;
+}
+
 export class NativeBackend implements Backend {
   private readonly repoPath: string;
   private readonly opts: NativeBackendOptions;
   private store = new GraphStore();
   private allTodos: Array<{ file: string; line: number; kind: string; text: string }> = [];
   private _ready = false;
+  private pyParser: Parser | null = null;
+  private py = new PythonParser();
+  private specParsers = new Map<LangSpec, Parser>();
 
   constructor(repoPath: string, opts: NativeBackendOptions) {
     this.repoPath = repoPath;
@@ -42,8 +50,9 @@ export class NativeBackend implements Backend {
 
   get ready(): boolean { return this._ready; }
   get transport(): string { return 'native'; }
+  get symbolCount(): number { return this.store.nodes.size; }
 
-  async start(): Promise<void> {
+  async start(progress?: IndexProgress): Promise<void> {
     await Parser.init({ locateFile: () => this.opts.coreWasmPath });
 
     // Load every grammar whose wasm shipped; skip any that's missing.
@@ -55,41 +64,77 @@ export class NativeBackend implements Backend {
       return parser;
     };
 
-    const pyParser = await load('tree-sitter-python.wasm');
-    const py = new PythonParser();
-    const specParsers = new Map<LangSpec, Parser>();
+    this.pyParser = await load('tree-sitter-python.wasm');
     for (const spec of LANG_SPECS) {
       const parser = await load(spec.grammarWasm);
-      if (parser) specParsers.set(spec, parser);
+      if (parser) this.specParsers.set(spec, parser);
     }
 
-    const results: ParseResult[] = [];
-    const ingestResult = (rel: string, res: ParseResult) => {
-      results.push(res);
-      for (const t of res.todos) this.allTodos.push({ file: rel, ...t });
-    };
-
-    for (const file of this.walk(this.repoPath)) {
-      const rel = path.relative(this.repoPath, file).replace(/\\/g, '/');
-      let source: string;
-      try { source = fs.readFileSync(file, 'utf8'); } catch { continue; }
-
-      if (pyParser && (file.endsWith('.py') || file.endsWith('.pyi'))) {
-        this.tryParse(pyParser, source, (tree) => ingestResult(rel, py.parse(tree, rel, source)));
-        continue;
-      }
-      const spec = specForFile(file);
-      const parser = spec ? specParsers.get(spec) : undefined;
-      if (spec && parser) {
-        this.tryParse(parser, source, (tree) => ingestResult(rel, parseGeneric(spec, tree, rel, source)));
+    // Enumerate first (cheap) so progress has a denominator, then parse in
+    // chunks, yielding to the event loop so the extension host stays
+    // responsive and cancellation is honored between chunks.
+    const files = [...this.walk(this.repoPath)].filter(
+      (f) => f.endsWith('.py') || f.endsWith('.pyi') || specForFile(f) !== null,
+    );
+    const CHUNK = 25;
+    for (let i = 0; i < files.length; i++) {
+      if (progress?.isCancelled?.()) return;
+      this.parseIntoStore(files[i]);
+      if (i % CHUNK === CHUNK - 1) {
+        progress?.report?.(i + 1, files.length);
+        await new Promise<void>((r) => setImmediate(r));
       }
     }
+    progress?.report?.(files.length, files.length);
 
-    this.store.ingest(results);
     this.store.resolveCrossReferences();
     this.store.computePageRank();
     this.store.ingestGitChurn(this.repoPath);
     this._ready = true;
+  }
+
+  /** Re-index a single file after a save (or remove it if deleted).
+   *  Raw parse results are per-file, so this is correct by construction. */
+  async reindexFile(absPath: string): Promise<boolean> {
+    if (!this._ready) return false;
+    const rel = path.relative(this.repoPath, absPath).replace(/\\/g, '/');
+    if (rel.startsWith('..')) return false;
+    const fileId = `file:${rel}`;
+
+    this.allTodos = this.allTodos.filter((t) => t.file !== rel);
+    if (!fs.existsSync(absPath)) {
+      if (!this.store.removeFile(fileId)) return false;
+    } else if (!this.parseIntoStore(absPath)) {
+      return false; // unsupported language — nothing to do
+    }
+
+    this.store.resolveCrossReferences();
+    this.store.computePageRank();
+    return true;
+  }
+
+  /** Parse one file into the store's raw layer. Returns false if no parser. */
+  private parseIntoStore(file: string): boolean {
+    const rel = path.relative(this.repoPath, file).replace(/\\/g, '/');
+    let source: string;
+    try { source = fs.readFileSync(file, 'utf8'); } catch { return false; }
+
+    const ingest = (res: ParseResult) => {
+      this.store.addFile(res);
+      for (const t of res.todos) this.allTodos.push({ file: rel, ...t });
+    };
+
+    if (this.pyParser && (file.endsWith('.py') || file.endsWith('.pyi'))) {
+      this.tryParse(this.pyParser, source, (tree) => ingest(this.py.parse(tree, rel, source)));
+      return true;
+    }
+    const spec = specForFile(file);
+    const parser = spec ? this.specParsers.get(spec) : undefined;
+    if (spec && parser) {
+      this.tryParse(parser, source, (tree) => ingest(parseGeneric(spec, tree, rel, source)));
+      return true;
+    }
+    return false;
   }
 
   private tryParse(parser: Parser, source: string, use: (tree: Parser.Tree) => void): void {
@@ -135,6 +180,7 @@ export class NativeBackend implements Backend {
       case 'codegraph_overview': return this.overview();
       case 'codegraph_get_dependencies': return this.dependencies(`file:${a.file_path}`);
       case 'codegraph_architectural_layers': return { layers: this.layers() };
+      case 'codegraph_file_symbols': return this.fileSymbols(String(a.file_path ?? ''));
       case 'codegraph_todos': return { todos: this.todos(String(a.kind ?? 'all'), Number(a.limit ?? 50)) };
       case 'codegraph_public_api': return this.publicApi(a.file_path ? `file:${a.file_path}` : null);
       case 'codegraph_recent_changes': return { changes: [] }; // not yet ported (git-log driven)
@@ -262,6 +308,19 @@ export class NativeBackend implements Backend {
   private todos(kind: string, limit: number) {
     const k = kind === 'all' ? null : kind.toUpperCase();
     return this.allTodos.filter((t) => !k || t.kind === k).slice(0, limit);
+  }
+
+  private fileSymbols(rel: string) {
+    const fileId = `file:${rel}`;
+    const symbols = [...this.store.nodes.values()]
+      .filter((n) => n.file === fileId && (n.kind === 'function' || n.kind === 'class'))
+      .map((n) => ({
+        node_id: n.id, name: n.name, kind: n.kind,
+        qualified_name: n.qualifiedName ?? n.name,
+        line_start: n.lineStart ?? 0, line_end: n.lineEnd ?? 0,
+      }))
+      .sort((a, b) => a.line_start - b.line_start);
+    return { file: rel, symbols, count: symbols.length };
   }
 
   private publicApi(fileId: string | null) {

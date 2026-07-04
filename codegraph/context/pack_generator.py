@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
+
+log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -139,7 +142,36 @@ class ContextPackGenerator:
 
     def to_markdown(self, pack: ContextPack) -> str:
         from codegraph.context.claude_md import ClaudeMdWriter
-        return ClaudeMdWriter(pack).render()
+
+        # Enforce the budget on the RENDERED output — the per-section token
+        # estimates used during generate() are heuristics; the final markdown
+        # is the ground truth. Trim Tier-2 content progressively until the
+        # pack fits (Tier 1 is never trimmed).
+        md = ClaudeMdWriter(pack).render()
+        trims = [
+            lambda p: setattr(p, "todos", p.todos[:8]),
+            lambda p: setattr(p, "session_notes", p.session_notes[:3]),
+            lambda p: setattr(p, "key_classes", p.key_classes[: len(p.key_classes) // 2]),
+            lambda p: setattr(p, "top_modules", p.top_modules[: len(p.top_modules) // 2]),
+            lambda p: setattr(p, "todos", []),
+            lambda p: setattr(p, "key_classes", []),
+            lambda p: setattr(p, "top_modules", []),
+            lambda p: setattr(p, "public_api_summary", p.public_api_summary[:15]),
+            lambda p: setattr(p, "hot_paths", p.hot_paths[:8]),
+        ]
+        for trim in trims:
+            if self._estimate_tokens(md) <= pack.token_budget:
+                return md
+            trim(pack)
+            md = ClaudeMdWriter(pack).render()
+
+        if self._estimate_tokens(md) > pack.token_budget:
+            log.warning(
+                "context pack exceeds token budget even after trimming "
+                "(~%d > %d tokens); consider a larger --token-budget",
+                self._estimate_tokens(md), pack.token_budget,
+            )
+        return md
 
     def to_html(self, pack: ContextPack) -> str:
         from codegraph.context.html_reporter import HtmlReporter

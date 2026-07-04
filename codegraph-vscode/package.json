@@ -1,9 +1,15 @@
 {
   "name": "codegraph",
   "displayName": "codeGraph — Knowledge Graph Copilot",
-  "description": "Knowledge graph for your codebase. Wires into GitHub Copilot and shows a live hive visualization of all code nodes and relationships.",
-  "version": "0.1.0",
+  "description": "Live knowledge graph for your codebase: graph-backed Go to Definition, caller CodeLens, Copilot chat participant, impact analysis, and a 3D architecture view. No Python required.",
+  "version": "0.2.0",
   "publisher": "codegraph",
+  "icon": "icon.png",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/promac256/codeGraph"
+  },
   "engines": {
     "vscode": "^1.93.0"
   },
@@ -450,6 +456,7 @@
     "bundle": "node esbuild.config.js",
     "watch": "node esbuild.config.js --watch",
     "lint": "eslint src --ext ts",
+    "parity": "esbuild scripts/parity-test.ts --bundle --platform=node --format=cjs --external:web-tree-sitter --outfile=dist/parity-test.cjs && node dist/parity-test.cjs",
     "test": "vscode-test"
   },
   "devDependencies": {

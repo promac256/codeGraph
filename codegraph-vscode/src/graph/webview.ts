@@ -89,14 +89,21 @@ export class GraphWebviewPanel {
         layerMap[layer] = (files as string[]).map((f) => (f.startsWith('file:') ? f : `file:${f}`));
       }
 
+      // Cap what we render, but SAY so — a silently truncated graph reads as
+      // "this is the whole architecture" when it may be a fraction of it.
+      const FILE_CAP_PER_LAYER = 50;
+      let totalFiles = 0;
+      let shownFiles = 0;
       for (const [layer, fileIds] of Object.entries(layerMap)) {
-        for (const fileId of fileIds.slice(0, 50)) {  // cap at 50 per layer
+        totalFiles += fileIds.length;
+        for (const fileId of fileIds.slice(0, FILE_CAP_PER_LAYER)) {
           const relPath = fileId.replace('file:', '');
           const name = relPath.split('/').pop() ?? relPath;
           nodes.push({
             data: { id: fileId, label: name, kind: 'file', layer, fullPath: relPath },
           });
           nodeSet.add(fileId);
+          shownFiles++;
         }
       }
 
@@ -128,7 +135,11 @@ export class GraphWebviewPanel {
       }
 
       this._currentGraph = { nodes, edges };
-      this._panel.webview.postMessage({ type: 'loadGraph', nodes, edges });
+      const truncation =
+        shownFiles < totalFiles
+          ? `showing ${shownFiles} of ${totalFiles} files (top ${FILE_CAP_PER_LAYER} per layer) + top ${Math.min(hotPaths.length, 80)} hot symbols`
+          : '';
+      this._panel.webview.postMessage({ type: 'loadGraph', nodes, edges, truncation });
     } catch (err) {
       this._panel.webview.postMessage({ type: 'error', message: String(err) });
     }

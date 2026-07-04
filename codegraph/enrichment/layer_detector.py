@@ -33,14 +33,7 @@ class LayerDetector:
         updates = []
         for nid, data in list(store.graph.nodes(data=True)):
             if data.get("kind") == NodeKind.FILE:
-                path = data.get("path", "")
-                layer = self.detect(path)
-                store.graph.nodes[nid]["layer"] = layer
+                layer = self.detect(data.get("path", ""))
                 updates.append((layer, nid))
 
-        if updates:
-            store._db.executemany(
-                "UPDATE nodes SET data=json_set(data,'$.layer',?) WHERE node_id=?",
-                updates,
-            )
-            store._db.commit()
+        store.set_node_attr_bulk("layer", updates)

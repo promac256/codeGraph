@@ -14,6 +14,10 @@ type Tree = Parser.Tree;
 export interface ClassType {
   type: string;
   nameField?: string; // default 'name' (Rust impl uses 'type')
+  /** Only match when the node contains a descendant of this type — e.g. Go's
+   *  `type_spec` is a class only when it wraps a struct_type/interface_type,
+   *  not a plain type alias. */
+  childType?: string;
 }
 
 export interface LangSpec {
@@ -64,6 +68,7 @@ export function parseGeneric(spec: LangSpec, tree: Tree, rel: string, source: st
       const nameNode = node.childForFieldName(ct.nameField ?? 'name');
       const name = nameNode?.text;
       if (!name) continue;
+      if (ct.childType && firstDescendant(node, ct.childType) === null) continue;
       const start = node.startPosition.row + 1;
       const end = node.endPosition.row + 1;
       const classId = `class:${rel}::${name}`;
