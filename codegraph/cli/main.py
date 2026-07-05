@@ -87,12 +87,21 @@ def init(
     from codegraph.enrichment.convention_miner import ConventionMiner
     ConventionMiner(store).mine_and_save()
 
+    # Re-promote session notes (raw markdown layer) to graph nodes —
+    # the full rebuild above wiped all prior note nodes
+    from codegraph.context.session_notes import SessionNotesManager
+    notes_synced = SessionNotesManager(
+        settings.session_notes_path, store=store
+    ).sync_graph_nodes()
+
     console.print(f"\n[green]Graph built successfully:[/green]")
     console.print(f"  Files parsed:  {stats['files_parsed']}")
     console.print(f"  Files skipped: {stats['files_skipped']}")
     console.print(f"  Nodes:         {stats['nodes']}")
     console.print(f"  Edges:         {stats['edges']}")
     console.print(f"  Commits:       {stats.get('commits', 0)}")
+    if notes_synced:
+        console.print(f"  Session notes re-linked: {notes_synced}")
     if stats["errors"]:
         console.print(f"  [yellow]Errors:        {stats['errors']}[/yellow]")
 
@@ -114,6 +123,10 @@ def init(
 def update(
     repo: Path = typer.Argument(default=Path("."), help="Path to git repo"),
     since: Optional[str] = typer.Option(None, "--since", help="SHA to update from"),
+    re_enrich: bool = typer.Option(
+        False, "--re-enrich",
+        help="Also run LLM enrichment for symbols missing summaries",
+    ),
 ):
     """Incrementally update the graph from recent commits."""
     from codegraph.config import Settings
@@ -143,10 +156,19 @@ def update(
     from codegraph.enrichment.convention_miner import ConventionMiner
     ConventionMiner(store).mine_and_save()
 
+    # Re-attach LLM summaries dropped by file re-ingestion (cache-only, no API)
+    from codegraph.enrichment.llm_enricher import LLMEnricher
+    restored = LLMEnricher(store, settings).reattach_from_cache()
+
     console.print(f"[green]Update complete:[/green]")
     console.print(f"  Commits processed: {stats['commits_processed']}")
     console.print(f"  Files updated:     {stats['files_updated']}")
     console.print(f"  Files deleted:     {stats['files_deleted']}")
+    if restored:
+        console.print(f"  Summaries restored from cache: {restored}")
+
+    if re_enrich:
+        _run_enrichment(store, settings)
 
     _generate_pack(store, settings)
     store.close()
@@ -599,6 +621,126 @@ def watch(
 
 
 # ---------------------------------------------------------------------------
+# lint
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def lint(
+    repo: Path = typer.Argument(default=Path("."), help="Repo path"),
+    fix: bool = typer.Option(False, "--fix", help="Apply safe repairs (drop dangling edges, re-resolve note refs)"),
+):
+    """Check graph health: dangling edges, stale summaries, dead note refs.
+
+    Knowledge graphs rot without maintenance — run this periodically
+    (e.g. nightly alongside `codegraph update`, see `codegraph hooks`).
+    Only safe repairs are applied with --fix; nothing destructive.
+    """
+    from codegraph.config import Settings
+    from codegraph.graph.lint import GraphLinter
+    from codegraph.graph.store import GraphStore
+
+    settings = Settings.from_repo(repo)
+    if not settings.db_path.exists():
+        console.print("[red]No graph found. Run `codegraph init` first.[/red]")
+        raise typer.Exit(1)
+
+    store = GraphStore(settings.db_path)
+    store.open()
+    store.load_graph_to_memory()
+
+    linter = GraphLinter(
+        store, repo_root=repo.resolve(), codegraph_dir=settings.codegraph_dir
+    )
+    result = linter.lint(fix=fix)
+
+    if not result["findings"]:
+        console.print("[green]Graph is healthy — no findings.[/green]")
+        store.close()
+        return
+
+    _SEV_STYLE = {"error": "red", "warning": "yellow", "info": "dim"}
+    table = Table(title=f"Graph Lint — {result['total']} findings", show_header=True)
+    table.add_column("Severity", width=9)
+    table.add_column("Check", style="cyan")
+    table.add_column("Subject")
+    table.add_column("Message")
+    for f in result["findings"][:50]:
+        style = _SEV_STYLE.get(f["severity"], "")
+        table.add_row(
+            f"[{style}]{f['severity']}[/{style}]" if style else f["severity"],
+            f["check"],
+            str(f["subject"])[:60],
+            f["message"][:80],
+        )
+    console.print(table)
+    if result["total"] > 50:
+        console.print(f"[dim]... and {result['total'] - 50} more[/dim]")
+
+    if result["fixed"]:
+        fixes = ", ".join(f"{k}: {v}" for k, v in result["fixed"].items())
+        console.print(f"\n[green]Repairs applied:[/green] {fixes}")
+    elif any(f.get("fixable") for f in result["findings"]):
+        console.print("\n[dim]Re-run with --fix to apply safe repairs.[/dim]")
+
+    store.close()
+
+
+# ---------------------------------------------------------------------------
+# hooks
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def hooks():
+    """Print recipes for keeping the graph alive automatically.
+
+    Shows a Claude Code hooks block (session-end graph refresh), a CLAUDE.md
+    instruction snippet (agents file durable decisions as linked notes), and
+    a nightly maintenance cron line.
+    """
+    console.print("""\
+[bold]Keeping the graph alive[/bold]
+
+A knowledge graph that only grows when you remember to feed it goes stale.
+Three recipes — copy what fits your setup:
+
+[bold cyan]1. Claude Code hooks[/bold cyan] — refresh the graph when a session ends.
+Merge into .claude/settings.json:
+
+[dim]{
+  "hooks": {
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "codegraph update . && codegraph lint . --fix"
+          }
+        ]
+      }
+    ]
+  }
+}[/dim]
+
+[bold cyan]2. CLAUDE.md instruction[/bold cyan] — agents file durable knowledge as linked notes.
+Add to your project's CLAUDE.md:
+
+[dim]## Session memory
+- Before ending a session, record durable decisions, gotchas, and conventions:
+  `codegraph notes --add "..." --category decision --refs Symbol.name --source session`
+  (or the MCP tool codegraph_add_session_note with refs=[...])
+- Query prior knowledge before large changes: codegraph_get_session_notes,
+  and check the notes attached to symbols via codegraph_find_symbol.[/dim]
+
+[bold cyan]3. Nightly maintenance[/bold cyan] — fold in commits, restore summaries, repair rot.
+Cron line:
+
+[dim]0 3 * * *  cd /path/to/repo && codegraph update . --re-enrich && codegraph lint . --fix[/dim]
+""")
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 # notes
@@ -610,47 +752,83 @@ def notes(
     repo: Path = typer.Argument(default=Path("."), help="Path to git repo"),
     add: Optional[str] = typer.Option(None, "--add", "-a", help="Append a new note"),
     category: str = typer.Option("general", "--category", "-c", help="Note category"),
+    refs: Optional[str] = typer.Option(
+        None, "--refs", help="Comma-separated symbol names this note is about"
+    ),
+    source: str = typer.Option(
+        "manual", "--source", help="Provenance: manual|session|pr|commit"
+    ),
     clear: bool = typer.Option(False, "--clear", help="Delete all notes"),
     count: int = typer.Option(20, "--count", "-n", help="Max notes to display"),
 ):
     """Show, add, or clear architectural session notes.
 
-    Session notes persist across coding sessions and are included in
-    CLAUDE.md so new sessions inherit prior discoveries.
+    Session notes persist across coding sessions, are included in
+    CLAUDE.md so new sessions inherit prior discoveries, and are stored
+    as graph nodes linked to the symbols named in --refs.
 
     Examples:
 
       codegraph notes                         # show recent notes
-      codegraph notes --add "GraphBuilder uses two-pass build" --category architecture
+      codegraph notes --add "GraphBuilder uses two-pass build" --category architecture --refs GraphBuilder.build
       codegraph notes --clear                 # wipe all notes
     """
     from codegraph.config import Settings
     from codegraph.context.session_notes import SessionNotesManager
+    from codegraph.graph.store import GraphStore
 
     settings = Settings.from_repo(repo)
-    mgr = SessionNotesManager(settings.session_notes_path)
 
-    if clear:
-        mgr.clear()
-        console.print("[green]Session notes cleared.[/green]")
-        return
+    store = None
+    if settings.db_path.exists():
+        store = GraphStore(settings.db_path)
+        store.open()
+        store.load_graph_to_memory()
+    mgr = SessionNotesManager(settings.session_notes_path, store=store)
 
-    if add:
-        mgr.append(add.strip(), category=category)
-        console.print(f"[green]Note added[/green] [{category}]: {add[:80]}")
-        return
+    try:
+        if clear:
+            mgr.clear()
+            console.print("[green]Session notes cleared.[/green]")
+            return
 
-    # Display
-    recent = mgr.read_recent(max_notes=count)
-    if not recent:
-        console.print("[dim]No session notes yet.[/dim]")
-        console.print(f"Add one: codegraph notes --add \"Your discovery here\"")
-        return
+        if add:
+            ref_list = [r.strip() for r in refs.split(",")] if refs else None
+            result = mgr.append(
+                add.strip(), category=category, refs=ref_list, source=source
+            )
+            console.print(f"[green]Note added[/green] [{category}]: {add[:80]}")
+            if result.get("resolved_refs"):
+                console.print(
+                    f"  Linked to: {', '.join(result['resolved_refs'].keys())}"
+                )
+            if result.get("unresolved_refs"):
+                console.print(
+                    f"  [yellow]Unresolved refs:[/yellow] "
+                    f"{', '.join(result['unresolved_refs'])}"
+                )
+            return
 
-    console.print(f"[bold]Session Notes[/bold] ({len(recent)} shown)\n")
-    for n in recent:
-        console.print(f"[bold cyan]{n['timestamp']}[/bold cyan] · [italic]{n['category']}[/italic]")
-        console.print(f"{n['note']}\n")
+        # Display
+        recent = mgr.read_recent(max_notes=count)
+        if not recent:
+            console.print("[dim]No session notes yet.[/dim]")
+            console.print(f"Add one: codegraph notes --add \"Your discovery here\"")
+            return
+
+        console.print(f"[bold]Session Notes[/bold] ({len(recent)} shown)\n")
+        for n in recent:
+            meta = f"[bold cyan]{n['timestamp']}[/bold cyan] · [italic]{n['category']}[/italic]"
+            if n.get("source") and n["source"] != "manual":
+                meta += f" · {n['source']}"
+            console.print(meta)
+            console.print(f"{n['note']}")
+            if n.get("refs"):
+                console.print(f"[dim]refs: {', '.join(n['refs'])}[/dim]")
+            console.print()
+    finally:
+        if store is not None:
+            store.close()
 
 
 # ---------------------------------------------------------------------------

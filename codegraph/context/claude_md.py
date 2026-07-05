@@ -81,10 +81,11 @@ Use `codegraph_pr_patterns` for full details.
 ## Session Notes ({{ pack.session_notes | length }} most recent)
 
 {% for n in pack.session_notes %}
-**{{ n.timestamp }}** · *{{ n.category }}*
+**{{ n.timestamp }}** · *{{ n.category }}*{% if n.get('source') and n.get('source') != 'manual' %} · source: {{ n.source }}{% endif %}
 
 {{ n.note | truncate(300) }}
-
+{% if n.get('refs') %}_Refs_: {{ n.refs | join(', ') }}
+{% endif %}
 {% endfor %}
 {% endif %}
 

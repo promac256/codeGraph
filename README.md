@@ -65,17 +65,43 @@ or `--no-claude-md` to always use the fallback location.
 | `serve` | MCP server (`--transport stdio\|sse`, `--port 8765`) |
 | `stats` | Repo statistics and hot-paths heatmap |
 | `watch` | Auto-update on git changes |
-| `notes` | Session notes (`--add`, `--category`, `--clear`) |
+| `notes` | Session notes (`--add`, `--category`, `--refs`, `--source`, `--clear`) |
+| `lint` | Graph health checks — dangling edges, stale summaries, dead note refs (`--fix`) |
+| `hooks` | Print recipes for automatic graph maintenance (Claude Code hooks, cron) |
 | `enrich` | Anthropic API docstring summaries |
 | `pr-patterns` | Mine GitHub PR review themes |
 
 ## MCP integration
 
-`codegraph serve .` starts a FastMCP server named `codeGraph` exposing 17 tools
+`codegraph serve .` starts a FastMCP server named `codeGraph` exposing 18 tools
 (`codegraph_find_symbol`, `codegraph_find_callers`, `codegraph_impact_analysis`,
-`codegraph_hot_paths`, `codegraph_compress`, …) plus `graph://context-pack` and
-`graph://summary` resources. Use `--transport sse --port 8765` to run a shared
-server that Claude Code and the VS Code extension can both connect to.
+`codegraph_hot_paths`, `codegraph_compress`, `codegraph_health`, …) plus
+`graph://context-pack` and `graph://summary` resources. Use `--transport sse
+--port 8765` to run a shared server that Claude Code and the VS Code extension
+can both connect to.
+
+## Keeping the graph alive
+
+A knowledge graph that only grows when you remember to feed it goes stale.
+codeGraph ships the pieces; scheduling belongs to your harness:
+
+- **Session notes are graph nodes.** `codegraph notes --add "..." --refs
+  GraphBuilder.build --source session` stores the note in the append-only raw
+  layer (`.codegraph/session_notes.md`) *and* as a `note` node with
+  `annotates` edges to the referenced symbols. Notes attached to hot-path
+  symbols are preferred when the context pack is assembled, and
+  `codegraph_find_symbol` returns the notes attached to each match.
+- **Summaries survive updates and announce staleness.** LLM summaries carry
+  `llm_enriched_at` + a content cache key; `codegraph update` re-attaches
+  unchanged summaries from the local cache after re-parsing files, and
+  `codegraph lint` flags summaries whose symbol has since changed.
+- **`codegraph lint [--fix]`** detects graph rot — dangling edges, unresolved
+  note refs, files missing on disk, index-behind-HEAD — and applies the safe
+  repairs with `--fix`.
+- **`codegraph hooks`** prints ready-to-paste recipes: a Claude Code
+  `SessionEnd` hook (refresh + lint on session end), a CLAUDE.md snippet
+  telling agents to file durable decisions as linked notes, and a nightly
+  maintenance cron line.
 
 ## VS Code extension
 

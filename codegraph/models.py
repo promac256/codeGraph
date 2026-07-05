@@ -17,6 +17,7 @@ class NodeKind(StrEnum):
     TYPE = "type"
     TEST = "test"
     COMMIT = "commit"
+    NOTE = "note"
 
 
 class EdgeKind(StrEnum):
@@ -31,6 +32,7 @@ class EdgeKind(StrEnum):
     CONTAINS = "contains"
     DEPENDS_ON = "depends_on"
     RESOLVES_TO = "resolves_to"
+    ANNOTATES = "annotates"
 
 
 class BaseNode(BaseModel):
@@ -131,6 +133,25 @@ class CommitNode(BaseNode):
     files_changed: list[str] = Field(default_factory=list)
     insertions: int = 0
     deletions: int = 0
+
+
+class NoteNode(BaseNode):
+    """A session note promoted to a graph node.
+
+    Notes annotate code symbols via ANNOTATES edges, carry provenance
+    (source + created_at), and remain backed by the append-only raw
+    layer in .codegraph/session_notes.md.
+    """
+
+    kind: NodeKind = NodeKind.NOTE
+    name: str
+    text: str
+    category: str = "general"
+    source: str = "manual"
+    created_at: str = ""
+    refs: list[str] = Field(default_factory=list)
+    unresolved_refs: list[str] = Field(default_factory=list)
+    docstring: str | None = None  # mirrors text so notes are FTS-searchable
 
 
 class GraphEdge(BaseModel):

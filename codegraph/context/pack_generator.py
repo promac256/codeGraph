@@ -116,12 +116,27 @@ class ContextPackGenerator:
                 }
                 remaining -= self._estimate_tokens(pack.pr_patterns)
 
-        # Session notes — included when they exist and budget allows
+        # Session notes — included when they exist and budget allows.
+        # Notes that annotate hot-path symbols are preferred over merely
+        # recent ones, so the highest-leverage knowledge survives the cut.
         if self.notes_path and remaining > 300:
             from codegraph.context.session_notes import SessionNotesManager
             mgr = SessionNotesManager(self.notes_path)
             if mgr.exists():
-                pack.session_notes = mgr.read_recent(max_notes=8)
+                candidates = mgr.read_recent(max_notes=24)
+                hot_names = {
+                    h.get("name", "") for h in pack.hot_paths
+                } | {
+                    h.get("file", "").replace("file:", "") for h in pack.hot_paths
+                }
+                def _is_hot(note: dict) -> bool:
+                    return any(
+                        r in hot_names or r.rsplit(".", 1)[0] in hot_names
+                        for r in note.get("refs", [])
+                    )
+                hot = [n for n in candidates if _is_hot(n)]
+                rest = [n for n in candidates if not _is_hot(n)]
+                pack.session_notes = (hot + rest)[:8]
 
         # Tier 3
         from codegraph.models import NodeKind

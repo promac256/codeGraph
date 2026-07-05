@@ -59,11 +59,13 @@ def _get_notes_manager():
     from codegraph.config import Settings
     from codegraph.context.session_notes import SessionNotesManager
 
+    # Ensure the store is initialized so notes land in the graph too
+    _get_query()
     if _settings is not None:
-        return SessionNotesManager(_settings.session_notes_path)
+        return SessionNotesManager(_settings.session_notes_path, store=_graph_store)
     repo_path = Path(os.environ.get("CODEGRAPH_REPO_PATH", ".")).resolve()
     settings = Settings.from_repo(repo_path)
-    return SessionNotesManager(settings.session_notes_path)
+    return SessionNotesManager(settings.session_notes_path, store=_graph_store)
 
 
 @mcp.tool()
@@ -77,6 +79,25 @@ def codegraph_find_symbol(name: str, kind: str = "any") -> dict:
     """
     q = _get_query()
     results = q.find_definition(name, kind)
+
+    def _attached_notes(node_id: str) -> list[dict]:
+        G = q.store.graph
+        if node_id not in G:
+            return []
+        notes = []
+        for src, _, key in G.in_edges(node_id, keys=True):
+            if key != "annotates":
+                continue
+            data = G.nodes.get(src, {})
+            notes.append(
+                {
+                    "category": data.get("category", "general"),
+                    "created_at": data.get("created_at", ""),
+                    "text": (data.get("text") or "")[:300],
+                }
+            )
+        return notes
+
     return {
         "query": name,
         "kind": kind,
@@ -89,6 +110,7 @@ def codegraph_find_symbol(name: str, kind: str = "any") -> dict:
                 "line": r.line_start,
                 "signature": r.signature,
                 "docstring": (r.docstring or "")[:200],
+                "notes": _attached_notes(r.node_id),
             }
             for r in results
         ],
@@ -317,20 +339,62 @@ def codegraph_get_session_notes(max_notes: int = 10) -> dict:
 
 
 @mcp.tool()
-def codegraph_add_session_note(note: str, category: str = "general") -> dict:
+def codegraph_add_session_note(
+    note: str,
+    category: str = "general",
+    refs: list[str] | None = None,
+    source: str = "session",
+) -> dict:
     """
     Append an architectural discovery or note for this repository.
 
-    Notes are stored in .codegraph/session_notes.md and included in
-    future CLAUDE.md context packs so every new session inherits them.
+    Notes are stored in .codegraph/session_notes.md, promoted to graph
+    nodes linked to the symbols they reference, and included in future
+    CLAUDE.md context packs so every new session inherits them.
 
     Args:
         note:     The note text (markdown supported).
         category: One of: general, architecture, convention, warning, decision.
+        refs:     Symbol names or qualified names this note is about
+                  (e.g. ["GraphBuilder.build", "store.py"]). Each resolved
+                  ref links the note to that symbol in the graph.
+        source:   Provenance (default 'session'; use 'pr', 'commit', 'manual').
     """
     mgr = _get_notes_manager()
-    mgr.append(note, category=category)
-    return {"saved": True, "total_notes": mgr.note_count()}
+    result = mgr.append(note, category=category, refs=refs, source=source)
+    return {
+        "saved": True,
+        "total_notes": mgr.note_count(),
+        "resolved_refs": result.get("resolved_refs", {}),
+        "unresolved_refs": result.get("unresolved_refs", []),
+    }
+
+
+@mcp.tool()
+def codegraph_health() -> dict:
+    """
+    Run graph health checks: dangling edges, unresolved note refs, stale
+    LLM summaries, files missing on disk, and index-behind-HEAD drift.
+
+    Read-only (no repairs). Run `codegraph lint --fix` to apply safe fixes.
+    """
+    q = _get_query()
+    from codegraph.graph.lint import GraphLinter
+
+    repo_root = None
+    codegraph_dir = None
+    if _settings is not None:
+        repo_root = _settings.repo_path
+        codegraph_dir = _settings.codegraph_dir
+    linter = GraphLinter(q.store, repo_root=repo_root, codegraph_dir=codegraph_dir)
+    result = linter.lint(fix=False)
+    return {
+        "healthy": result["total"] == 0,
+        "total_findings": result["total"],
+        "summary": result["summary"],
+        "findings": result["findings"][:30],
+        "tip": "Run `codegraph lint --fix` to apply safe repairs.",
+    }
 
 
 @mcp.tool()

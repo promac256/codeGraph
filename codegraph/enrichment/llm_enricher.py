@@ -136,20 +136,30 @@ class LLMEnricher:
         )
         return _parse_json_response(message.content[0].text)
 
-    def _patch_node(self, node_id: str, summary: str) -> None:
+    def _patch_node(self, node_id: str, summary: str, cache_key: str | None = None) -> None:
+        from datetime import datetime, timezone
+
         row = self._store._db.execute(
             "SELECT data FROM nodes WHERE node_id=?", (node_id,)
         ).fetchone()
         if not row:
             return
+        enriched_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
         data = orjson.loads(row[0])
         data["llm_summary"] = summary
+        data["llm_enriched_at"] = enriched_at
+        if cache_key:
+            data["llm_cache_key"] = cache_key
         self._store._db.execute(
             "UPDATE nodes SET data=? WHERE node_id=?",
             (orjson.dumps(data).decode(), node_id),
         )
         if node_id in self._store.graph:
-            self._store.graph.nodes[node_id]["llm_summary"] = summary
+            attrs = self._store.graph.nodes[node_id]
+            attrs["llm_summary"] = summary
+            attrs["llm_enriched_at"] = enriched_at
+            if cache_key:
+                attrs["llm_cache_key"] = cache_key
 
     # ------------------------------------------------------------------
     # Public API
@@ -186,18 +196,18 @@ class LLMEnricher:
             batch = candidates[batch_start : batch_start + batch_size]
 
             to_call: list[dict] = []
-            cache_results: list[tuple[str, str]] = []  # (node_id, summary)
+            cache_results: list[tuple[str, str, str]] = []  # (node_id, summary, cache_key)
 
             for node in batch:
                 sig = node.get("signature") or node.get("name", "")
                 key = _cache_key(node["node_id"], sig, node.get("docstring"))
                 if key in cache:
-                    cache_results.append((node["node_id"], cache[key]))
+                    cache_results.append((node["node_id"], cache[key], key))
                 else:
                     to_call.append(node)
 
-            for node_id, summary in cache_results:
-                self._patch_node(node_id, summary)
+            for node_id, summary, key in cache_results:
+                self._patch_node(node_id, summary, cache_key=key)
                 stats["cached"] += 1
 
             if to_call:
@@ -214,7 +224,7 @@ class LLMEnricher:
                         sig = node.get("signature") or node.get("name", "")
                         key = _cache_key(node["node_id"], sig, node.get("docstring"))
                         cache[key] = summary
-                        self._patch_node(node["node_id"], summary)
+                        self._patch_node(node["node_id"], summary, cache_key=key)
                         stats["enriched"] += 1
                     # Count nodes the API didn't return results for
                     missing = len(to_call) - len(results)
@@ -229,3 +239,38 @@ class LLMEnricher:
 
         self._store.commit_transaction()
         return stats
+
+    def reattach_from_cache(
+        self, kinds: tuple[str, ...] = ("function", "class")
+    ) -> int:
+        """Re-attach cached summaries to nodes that lost them on re-ingest.
+
+        `codegraph update` removes and re-parses changed files, which drops
+        `llm_summary` from recreated nodes. Summaries whose cache key
+        (node_id + signature + docstring) is unchanged are restored from the
+        disk cache without any API call. Returns the number restored.
+
+        No-op (returns 0) if enrichment has never been run for this repo.
+        """
+        cache_dir = self._settings.codegraph_dir / "llm_cache"
+        if not cache_dir.exists():
+            return 0
+        cache = self._get_cache()
+
+        placeholders = ",".join("?" * len(kinds))
+        cur = self._store._db.execute(
+            f"SELECT data FROM nodes WHERE kind IN ({placeholders})", kinds
+        )
+        restored = 0
+        for (data,) in cur.fetchall():
+            node = orjson.loads(data)
+            if node.get("llm_summary"):
+                continue
+            sig = node.get("signature") or node.get("name", "")
+            key = _cache_key(node["node_id"], sig, node.get("docstring"))
+            if key in cache:
+                self._patch_node(node["node_id"], cache[key], cache_key=key)
+                restored += 1
+        if restored:
+            self._store.commit_transaction()
+        return restored

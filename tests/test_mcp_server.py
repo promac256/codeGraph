@@ -420,6 +420,56 @@ class TestSessionNotes:
         get_result = s.codegraph_get_session_notes(max_notes=5)
         assert len(get_result["notes"]) >= 1
 
+    def test_add_note_with_refs_links_symbol(self, mock_server, tmp_path, monkeypatch):
+        from codegraph.config import Settings
+        import codegraph.mcp.server as s
+
+        settings = Settings.from_repo(tmp_path)
+        settings.session_notes_path.parent.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setattr(s, "_settings", settings)
+
+        q, store = mock_server
+        result = s.codegraph_add_session_note(
+            "Animal is the base class for all species.",
+            category="architecture",
+            refs=["Animal", "NoSuchThing"],
+        )
+        assert result["saved"] is True
+        assert result["resolved_refs"] == {"Animal": "class:src/main.py::Animal"}
+        assert result["unresolved_refs"] == ["NoSuchThing"]
+
+        # The note surfaces on the symbol via find_symbol
+        found = s.codegraph_find_symbol("Animal", kind="class")
+        notes = found["matches"][0]["notes"]
+        assert any("base class for all species" in n["text"] for n in notes)
+
+
+# ---------------------------------------------------------------------------
+# codegraph_health
+# ---------------------------------------------------------------------------
+
+
+class TestHealth:
+    def test_no_errors_on_clean_graph(self, mock_server):
+        result = srv.codegraph_health()
+        # Fixture graph may produce info-level findings (e.g. edge-less type
+        # nodes) but must have no errors
+        assert all(f["severity"] != "error" for f in result["findings"])
+        assert "dangling_edge" not in result["summary"]
+
+    def test_detects_dangling_edge(self, mock_server):
+        from codegraph.models import EdgeKind, GraphEdge
+
+        q, store = mock_server
+        store.upsert_edge(
+            GraphEdge(src="func:src/main.py::main", dst="func:ghost", kind=EdgeKind.CALLS)
+        )
+        store.commit_transaction()
+
+        result = srv.codegraph_health()
+        assert result["healthy"] is False
+        assert result["summary"].get("dangling_edge") == 1
+
 
 # ---------------------------------------------------------------------------
 # Resources

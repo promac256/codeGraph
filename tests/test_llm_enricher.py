@@ -286,3 +286,89 @@ class TestLLMEnricher:
         enricher = LLMEnricher(tmp_db, settings)
         stats = enricher.enrich()
         assert stats == {"enriched": 0, "cached": 0, "errors": 0, "skipped": 0}
+
+
+# ---------------------------------------------------------------------------
+# Staleness metadata + survival across updates
+# ---------------------------------------------------------------------------
+
+
+class TestStalenessAndSurvival:
+    def test_enrichment_writes_staleness_metadata(self, tmp_db, tmp_path):
+        _insert_function(tmp_db, "func:t::meta", "meta_fn")
+        settings = _make_settings(tmp_path)
+        enricher = LLMEnricher(tmp_db, settings)
+
+        api_response = json.dumps({"0": "Summary."})
+        mock_client = MagicMock()
+        mock_client.messages.create.return_value = _mock_anthropic_response(api_response)
+
+        with patch.object(enricher, "_make_client", return_value=mock_client):
+            enricher.enrich()
+
+        import orjson
+        row = tmp_db._db.execute(
+            "SELECT data FROM nodes WHERE node_id='func:t::meta'"
+        ).fetchone()
+        data = orjson.loads(row[0])
+        assert data["llm_summary"] == "Summary."
+        assert data["llm_enriched_at"]
+        assert data["llm_cache_key"] == _cache_key(
+            "func:t::meta", "def meta_fn():", None
+        )
+
+    def test_reattach_restores_summary_after_reingest(self, tmp_db, tmp_path):
+        settings = _make_settings(tmp_path)
+        enricher = LLMEnricher(tmp_db, settings)
+
+        # Seed the disk cache as a prior enrichment run would have
+        import diskcache
+        cache_dir = settings.codegraph_dir / "llm_cache"
+        cache_dir.mkdir(exist_ok=True)
+        key = _cache_key("func:t::surv", "def surv_fn():", None)
+        with diskcache.Cache(str(cache_dir)) as c:
+            c[key] = "Survived summary."
+
+        # Node recreated by update without llm_summary (the silent-drop case)
+        _insert_function(tmp_db, "func:t::surv", "surv_fn")
+
+        restored = enricher.reattach_from_cache()
+        assert restored == 1
+
+        import orjson
+        row = tmp_db._db.execute(
+            "SELECT data FROM nodes WHERE node_id='func:t::surv'"
+        ).fetchone()
+        data = orjson.loads(row[0])
+        assert data["llm_summary"] == "Survived summary."
+        assert data["llm_cache_key"] == key
+
+    def test_reattach_skips_changed_signature(self, tmp_db, tmp_path):
+        settings = _make_settings(tmp_path)
+        enricher = LLMEnricher(tmp_db, settings)
+
+        import diskcache
+        cache_dir = settings.codegraph_dir / "llm_cache"
+        cache_dir.mkdir(exist_ok=True)
+        old_key = _cache_key("func:t::chg", "def chg_fn():", None)
+        with diskcache.Cache(str(cache_dir)) as c:
+            c[old_key] = "Stale summary."
+
+        # Signature changed since the summary was generated → cache miss
+        fn = FunctionNode(
+            node_id="func:t::chg",
+            name="chg_fn",
+            qualified_name="chg_fn",
+            file="file:test.py",
+            signature="def chg_fn(x: int):",
+        )
+        tmp_db.upsert_node(fn)
+        tmp_db.commit_transaction()
+
+        assert enricher.reattach_from_cache() == 0
+
+    def test_reattach_noop_without_cache_dir(self, tmp_db, tmp_path):
+        _insert_function(tmp_db, "func:t::nocache", "nocache_fn")
+        settings = _make_settings(tmp_path)
+        enricher = LLMEnricher(tmp_db, settings)
+        assert enricher.reattach_from_cache() == 0
