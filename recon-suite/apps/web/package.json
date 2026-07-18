@@ -1,0 +1,12 @@
+{
+  "name": "@recon/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "React + Vite SPA — deployed as a UiPath Coded App.",
+  "scripts": {
+    "build": "echo 'TODO: scaffold via UiPath Studio Web / Coded Apps CLI (>=0.1.21)'",
+    "typecheck": "echo 'no-op until app is scaffolded'",
+    "test": "echo 'no-op until app is scaffolded'"
+  }
+}
