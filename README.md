@@ -118,14 +118,15 @@ participant, Copilot language-model tools, error tracing, and a 3D graph view.
 
 The extension can source its graph from either backend, selectable in settings:
 
-- **`python`** (default) — talks to the `codegraph` CLI over MCP (a stdio
-  subprocess, or a shared `--transport sse` server via `codegraph.transport`).
-  Full feature set (LLM enrichment, diff, PR mining), but requires a Python
+- **`native`** (default) — a built-in **Node/WASM backend that runs
+  in-process with no Python**. Parses all six languages with
+  `web-tree-sitter`, builds the graph in memory, and answers the same tools.
+  Works out of the box with zero install; indexing runs on activation /
+  "codeGraph: Initialize / Rebuild Graph".
+- **`python`** — talks to the `codegraph` CLI over MCP (a stdio subprocess,
+  or a shared `--transport sse` server via `codegraph.transport`). Full
+  feature set (LLM enrichment, diff, PR mining), but requires a Python
   install with `codegraph` available.
-- **`native`** — a built-in **Node/WASM backend that runs in-process with no
-  Python**. Parses all six languages with `web-tree-sitter`, builds the graph
-  in memory, and answers the same tools. Ideal for a zero-install setup;
-  indexing runs on activation / "codeGraph: Initialize / Rebuild Graph".
 
 The native backend covers the core read tools (find symbol/callers, impact
 analysis, hot paths, dependencies, search, public API, architectural layers,
@@ -141,21 +142,15 @@ not on PyPI), so `codegraph: command not found` in a terminal is expected in
 a native-only setup. To go Python-free:
 
 1. **Install the extension** (see "Install the packaged extension" below).
+   The native backend is the default — no configuration needed. (If you
+   previously set `codegraph.backend` to `python`, switch it back to
+   `native` in Settings and reload the window.)
 2. **Open your project folder** in VS Code — the native backend indexes the
    open workspace.
-3. **Switch the backend**: Settings (`Ctrl+,`) → search *codegraph* → set
-   **Codegraph: Backend** to `native`, or add to `settings.json`:
-
-   ```json
-   { "codegraph.backend": "native" }
-   ```
-
-4. **Reload the window** (`Ctrl+Shift+P` → *Developer: Reload Window*) so the
-   extension re-activates with the new backend.
-5. **Build the graph**: `Ctrl+Shift+P` → **codeGraph: Initialize / Rebuild
+3. **Build the graph**: `Ctrl+Shift+P` → **codeGraph: Initialize / Rebuild
    Graph**. Parsing runs in-process via WASM tree-sitter for all six
    languages — no external tools are spawned.
-6. **Use it**:
+4. **Use it**:
    - Chat with `@codegraph` in Copilot Chat; Copilot's model can also call
      the 12 registered codeGraph tools on its own.
    - **codeGraph: Show Graph View** opens the 3D graph;

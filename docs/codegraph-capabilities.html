@@ -554,10 +554,10 @@ codegraph serve .       <span class="c"># stdio MCP server</span></pre>
       </div>
       <div class="deploy">
         <h3>VS Code native backend</h3>
-        <p class="who">Best for: zero-install rollout, no Python required</p>
-        <p>The extension's built-in Node/WASM backend parses all six languages in-process and answers the core read tools. Enrichment, diff, and PR mining stay CLI-only.</p>
-        <pre><span class="c">// settings.json</span>
-"codegraph.backend": "native"</pre>
+        <p class="who">Best for: zero-install rollout — the default mode</p>
+        <p>The extension's built-in Node/WASM backend is the default: it parses all six languages in-process and answers the core read tools with no Python install. Enrichment, diff, and PR mining stay CLI-only.</p>
+        <pre><span class="c">// works out of the box; opt in to the CLI with</span>
+"codegraph.backend": "python"</pre>
       </div>
       <div class="deploy">
         <h3>Automation loop</h3>

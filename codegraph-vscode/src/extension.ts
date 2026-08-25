@@ -34,7 +34,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('codegraph.initGraph', async () => {
       const rp = getRepoPath();
       if (!rp) { vscode.window.showErrorMessage('codeGraph: No workspace folder open.'); return; }
-      const native = vscode.workspace.getConfiguration('codegraph').get<string>('backend', 'python') === 'native';
+      const native = vscode.workspace.getConfiguration('codegraph').get<string>('backend', 'native') === 'native';
       // Native backend builds in-memory on start; Python backend needs the CLI.
       if (!native) await runCodegraphInTerminal(rp, ['init', rp, '--workers', '8']);
       mcpClient?.dispose();
@@ -99,7 +99,7 @@ export function deactivate(): void {
 // ---------------------------------------------------------------------------
 
 async function startClient(repoPath: string): Promise<Backend> {
-  const mode = vscode.workspace.getConfiguration('codegraph').get<string>('backend', 'python');
+  const mode = vscode.workspace.getConfiguration('codegraph').get<string>('backend', 'native');
   const client: Backend = mode === 'native'
     ? new NativeBackend(repoPath, defaultWasmPaths(extensionPath))
     : new McpClient(repoPath);

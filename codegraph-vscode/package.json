@@ -73,8 +73,8 @@
             "Use the codegraph Python CLI via MCP (full feature set incl. enrichment, diff, PR mining; requires a Python install).",
             "Use the built-in in-process Node/WASM backend — no Python required (all 6 languages + core read tools; preview)."
           ],
-          "default": "python",
-          "description": "Which graph backend to use. 'native' needs no external install and runs in-process; 'python' uses the codegraph CLI for the full feature set."
+          "default": "native",
+          "description": "Which graph backend to use. 'native' (default) needs no external install and runs in-process; 'python' uses the codegraph CLI for the full feature set."
         },
         "codegraph.pythonPath": {
           "type": "string",
