@@ -132,6 +132,44 @@ analysis, hot paths, dependencies, search, public API, architectural layers,
 todos). Enrichment, diff, PR mining, and convention/test-coverage mining
 remain CLI-only — use the `python` backend for those.
 
+### Run without Python (native backend)
+
+No Python install is required to use codeGraph inside VS Code. Note that the
+`codegraph` terminal command is part of the Python package — it is installed
+from a clone of this repo via `pip install -e ".[all-langs]"` (the package is
+not on PyPI), so `codegraph: command not found` in a terminal is expected in
+a native-only setup. To go Python-free:
+
+1. **Install the extension** (see "Install the packaged extension" below).
+2. **Open your project folder** in VS Code — the native backend indexes the
+   open workspace.
+3. **Switch the backend**: Settings (`Ctrl+,`) → search *codegraph* → set
+   **Codegraph: Backend** to `native`, or add to `settings.json`:
+
+   ```json
+   { "codegraph.backend": "native" }
+   ```
+
+4. **Reload the window** (`Ctrl+Shift+P` → *Developer: Reload Window*) so the
+   extension re-activates with the new backend.
+5. **Build the graph**: `Ctrl+Shift+P` → **codeGraph: Initialize / Rebuild
+   Graph**. Parsing runs in-process via WASM tree-sitter for all six
+   languages — no external tools are spawned.
+6. **Use it**:
+   - Chat with `@codegraph` in Copilot Chat; Copilot's model can also call
+     the 12 registered codeGraph tools on its own.
+   - **codeGraph: Show Graph View** opens the 3D graph;
+     **codeGraph: Focus Current File in Graph** jumps to the active file.
+   - With `codegraph.autoUpdate` on (the default) the graph refreshes when
+     new commits are detected; **codeGraph: Update Graph from Recent
+     Commits** refreshes it manually.
+
+**What you get in native mode:** symbol search, callers, dependencies,
+impact analysis, hot paths, public API, architectural layers, todos, and the
+3D graph with error tracing. **What still needs the Python CLI:** LLM
+enrichment, symbol-level `diff`, PR mining, session notes, graph lint,
+CLAUDE.md context packs, and serving the graph over MCP to Claude Code.
+
 ### Install the packaged extension
 
 ```bash
