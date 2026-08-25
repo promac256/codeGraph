@@ -71,9 +71,10 @@ export class GraphWebviewPanel {
         this._client.call<{ hot_paths: Array<Record<string, unknown>> } | Array<Record<string, unknown>>>('codegraph_hot_paths', { top_n: 100 }),
       ]);
 
-      // Build Cytoscape graph data from layers + hot paths
-      const nodes: CyNode[] = [];
-      const edges: CyEdge[] = [];
+      // Build graph data from layers + hot paths, in the flat shape the
+      // 3d-force-graph renderer consumes directly
+      const nodes: GraphNode[] = [];
+      const edges: GraphLink[] = [];
       const nodeSet = new Set<string>();
 
       // Unwrap server response: may be {layers:{...}} or plain {...}
@@ -93,9 +94,7 @@ export class GraphWebviewPanel {
         for (const fileId of fileIds.slice(0, 50)) {  // cap at 50 per layer
           const relPath = fileId.replace('file:', '');
           const name = relPath.split('/').pop() ?? relPath;
-          nodes.push({
-            data: { id: fileId, label: name, kind: 'file', layer, fullPath: relPath },
-          });
+          nodes.push({ id: fileId, label: name, kind: 'file', layer, fullPath: relPath });
           nodeSet.add(fileId);
         }
       }
@@ -108,21 +107,19 @@ export class GraphWebviewPanel {
           const fileId = rawFile.startsWith('file:') ? rawFile : `file:${rawFile}`;
           const layer = this._layerOf(layerMap, fileId);
           nodes.push({
-            data: {
-              id,
-              label: hp['name'] as string,
-              kind: hp['kind'] as string,
-              layer,
-              pagerank: hp['pagerank'] as number,
-              commits: hp['commit_count'] as number,
-              complexity: hp['complexity'] as number,
-              fullPath: fileId.replace('file:', ''),
-            },
+            id,
+            label: hp['name'] as string,
+            kind: hp['kind'] as string,
+            layer,
+            pagerank: hp['pagerank'] as number,
+            commits: hp['commit_count'] as number,
+            complexity: hp['complexity'] as number,
+            fullPath: fileId.replace('file:', ''),
           });
           nodeSet.add(id);
           // Add edge from file to function
           if (fileId && nodeSet.has(fileId)) {
-            edges.push({ data: { source: fileId, target: id, kind: 'defines' } });
+            edges.push({ source: fileId, target: id, kind: 'defines' });
           }
         }
       }
@@ -355,28 +352,24 @@ function getNonce(): string {
   return text;
 }
 
-interface CyNode {
-  data: {
-    id: string;
-    label: string;
-    kind: string;
-    layer?: string;
-    pagerank?: number;
-    commits?: number;
-    complexity?: number;
-    fullPath?: string;
-  };
+interface GraphNode {
+  id: string;
+  label: string;
+  kind: string;
+  layer?: string;
+  pagerank?: number;
+  commits?: number;
+  complexity?: number;
+  fullPath?: string;
 }
 
-interface CyEdge {
-  data: {
-    source: string;
-    target: string;
-    kind: string;
-  };
+interface GraphLink {
+  source: string;
+  target: string;
+  kind: string;
 }
 
 interface GraphData {
-  nodes: CyNode[];
-  edges: CyEdge[];
+  nodes: GraphNode[];
+  edges: GraphLink[];
 }
