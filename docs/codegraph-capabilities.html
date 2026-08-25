@@ -1,0 +1,600 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>codeGraph Capabilities</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Public+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --bg: #fafbfa;
+    --surface: #ffffff;
+    --surface-2: #f0f4f2;
+    --ink: #17201e;
+    --ink-soft: #4c5a56;
+    --ink-faint: #7a8783;
+    --line: #dde4e1;
+    --accent: #0e9384;
+    --accent-soft: #e4f3f0;
+    --amber: #b4741b;
+    --amber-soft: #f8efdd;
+    --code-bg: #edf2f0;
+    --shadow: 0 1px 2px rgba(23, 32, 30, 0.05), 0 4px 16px rgba(23, 32, 30, 0.05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0d1514;
+      --surface: #131c1a;
+      --surface-2: #1a2523;
+      --ink: #e6edea;
+      --ink-soft: #a4b3ae;
+      --ink-faint: #71807b;
+      --line: #26332f;
+      --accent: #2ed3b7;
+      --accent-soft: #12302b;
+      --amber: #e0a33c;
+      --amber-soft: #2e2412;
+      --code-bg: #182220;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 16px rgba(0, 0, 0, 0.25);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0d1514;
+    --surface: #131c1a;
+    --surface-2: #1a2523;
+    --ink: #e6edea;
+    --ink-soft: #a4b3ae;
+    --ink-faint: #71807b;
+    --line: #26332f;
+    --accent: #2ed3b7;
+    --accent-soft: #12302b;
+    --amber: #e0a33c;
+    --amber-soft: #2e2412;
+    --code-bg: #182220;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 16px rgba(0, 0, 0, 0.25);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Public Sans", "Segoe UI", system-ui, sans-serif;
+    font-size: 15.5px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1060px; margin: 0 auto; padding: 0 28px; }
+
+  h1, h2, h3 {
+    font-family: "Bricolage Grotesque", "Public Sans", sans-serif;
+    text-wrap: balance;
+    margin: 0;
+  }
+  .mono { font-family: "IBM Plex Mono", ui-monospace, "Cascadia Mono", monospace; }
+  code, pre {
+    font-family: "IBM Plex Mono", ui-monospace, "Cascadia Mono", monospace;
+    font-size: 0.86em;
+  }
+  code {
+    background: var(--code-bg);
+    border-radius: 4px;
+    padding: 0.1em 0.4em;
+  }
+  a { color: var(--accent); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .eyebrow {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin: 0 0 14px;
+  }
+  .eyebrow::before {
+    content: "";
+    width: 9px; height: 9px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+    flex: none;
+  }
+
+  /* ---------- hero ---------- */
+  header {
+    border-bottom: 1px solid var(--line);
+    padding: 64px 0 0;
+    position: relative;
+    overflow: hidden;
+  }
+  .hero-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(220px, 1fr);
+    gap: 40px;
+    align-items: center;
+    padding-bottom: 48px;
+  }
+  .kicker {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12.5px;
+    color: var(--ink-faint);
+    margin: 0 0 18px;
+    letter-spacing: 0.04em;
+  }
+  .kicker strong { color: var(--ink-soft); font-weight: 600; }
+  h1 {
+    font-size: clamp(44px, 7vw, 72px);
+    font-weight: 750;
+    line-height: 1.0;
+    letter-spacing: -0.02em;
+  }
+  h1 .g { color: var(--accent); }
+  .pitch {
+    font-size: 18.5px;
+    color: var(--ink-soft);
+    max-width: 34em;
+    margin: 20px 0 0;
+    text-wrap: balance;
+  }
+  .hero-net { display: block; width: 100%; height: auto; color: var(--ink-faint); }
+
+  .stat-row {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    border-top: 1px solid var(--line);
+  }
+  .stat {
+    padding: 20px 18px 24px;
+    border-left: 1px solid var(--line);
+  }
+  .stat:first-child { border-left: none; padding-left: 0; }
+  .stat b {
+    display: block;
+    font-family: "Bricolage Grotesque", sans-serif;
+    font-size: 34px;
+    font-weight: 700;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+  }
+  .stat span {
+    font-size: 12.5px;
+    color: var(--ink-faint);
+    letter-spacing: 0.02em;
+  }
+
+  /* ---------- sections ---------- */
+  section { padding: 60px 0 8px; }
+  section > .wrap > h2 {
+    font-size: 29px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    margin-bottom: 8px;
+  }
+  .section-note {
+    color: var(--ink-soft);
+    max-width: 46em;
+    margin: 0 0 30px;
+  }
+
+  /* ---------- diagram ---------- */
+  figure.diagram {
+    margin: 0;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 26px 22px 14px;
+    box-shadow: var(--shadow);
+  }
+  .diagram-scroll { overflow-x: auto; }
+  .diagram svg { min-width: 900px; width: 100%; height: auto; color: var(--ink-soft); }
+  figcaption {
+    font-size: 13px;
+    color: var(--ink-faint);
+    padding: 12px 6px 6px;
+    border-top: 1px solid var(--line);
+    margin-top: 14px;
+  }
+
+  /* ---------- feature cards ---------- */
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 18px;
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 22px 22px 18px;
+    box-shadow: var(--shadow);
+  }
+  .card h3 { font-size: 18.5px; font-weight: 700; margin: 0 0 4px; }
+  .card .tag {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 12px;
+  }
+  .card .tag::before {
+    content: "";
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent);
+    flex: none;
+  }
+  .card.memory .tag::before { background: var(--amber); }
+  .card ul { margin: 10px 0 0; padding: 0 0 0 1.15em; }
+  .card li { margin: 7px 0; color: var(--ink-soft); }
+  .card li strong { color: var(--ink); font-weight: 600; }
+
+  /* ---------- deployment ---------- */
+  .deploy-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 18px;
+  }
+  .deploy {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 22px;
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .deploy h3 { font-size: 18px; font-weight: 700; }
+  .deploy .who {
+    font-size: 13px;
+    color: var(--accent);
+    font-weight: 600;
+    margin: -6px 0 0;
+  }
+  .deploy p { margin: 0; color: var(--ink-soft); font-size: 14.5px; }
+  .deploy pre {
+    margin: auto 0 0;
+    background: var(--code-bg);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 12px 14px;
+    overflow-x: auto;
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: var(--ink);
+  }
+  .deploy pre .c { color: var(--ink-faint); }
+
+  /* ---------- requirements ---------- */
+  .req {
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 10px 26px;
+  }
+  .req dl {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 0 36px;
+    margin: 0;
+  }
+  .req .pair {
+    display: grid;
+    grid-template-columns: 118px 1fr;
+    gap: 14px;
+    padding: 13px 0;
+    border-bottom: 1px solid var(--line);
+    align-items: baseline;
+  }
+  .req dt {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+  .req dd { margin: 0; font-size: 14px; color: var(--ink-soft); }
+  .req dd code { font-size: 0.92em; }
+
+  footer {
+    margin-top: 64px;
+    border-top: 1px solid var(--line);
+    padding: 22px 0 40px;
+    font-size: 12.5px;
+    color: var(--ink-faint);
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+
+  @media (max-width: 860px) {
+    .hero-grid { grid-template-columns: 1fr; }
+    .hero-net { max-width: 340px; }
+    .stat-row { grid-template-columns: repeat(2, 1fr); }
+    .stat { padding-left: 0; border-left: none; border-top: 1px solid var(--line); }
+    .stat:first-child, .stat:nth-child(2) { border-top: none; }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .card, .deploy { transition: border-color 160ms ease; }
+    .card:hover, .deploy:hover { border-color: var(--accent); }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="hero-grid">
+      <div>
+        <p class="kicker"><strong>promac256/codegraph</strong> · engineering review · v0.1.0</p>
+        <h1>code<span class="g">Graph</span></h1>
+        <p class="pitch">A knowledge-graph engine for LLM coding assistants. It indexes a git repository into a queryable symbol graph, serves it to agents over MCP, and compresses it into session-start context packs — so assistants navigate code by structure instead of reading files.</p>
+      </div>
+      <svg class="hero-net" viewBox="0 0 300 220" role="img" aria-label="Decorative node-and-edge graph motif">
+        <g stroke="currentColor" stroke-width="1" opacity="0.5">
+          <line x1="60" y1="50" x2="150" y2="95"/>
+          <line x1="150" y1="95" x2="245" y2="45"/>
+          <line x1="150" y1="95" x2="105" y2="175"/>
+          <line x1="150" y1="95" x2="225" y2="150"/>
+          <line x1="60" y1="50" x2="105" y2="175"/>
+          <line x1="225" y1="150" x2="245" y2="45"/>
+          <line x1="105" y1="175" x2="225" y2="150"/>
+          <line x1="35" y1="130" x2="60" y2="50"/>
+          <line x1="35" y1="130" x2="105" y2="175"/>
+        </g>
+        <g fill="var(--bg)" stroke="currentColor" stroke-width="1.5">
+          <circle cx="60" cy="50" r="9"/>
+          <circle cx="245" cy="45" r="7"/>
+          <circle cx="35" cy="130" r="6"/>
+          <circle cx="225" cy="150" r="8"/>
+        </g>
+        <circle cx="150" cy="95" r="13" fill="var(--accent)"/>
+        <circle cx="105" cy="175" r="8" fill="var(--amber)"/>
+      </svg>
+    </div>
+    <div class="stat-row">
+      <div class="stat"><b>18</b><span>MCP query tools</span></div>
+      <div class="stat"><b>6</b><span>languages, tree-sitter parsed</span></div>
+      <div class="stat"><b>2–8k</b><span>tokens per context pack</span></div>
+      <div class="stat"><b>14</b><span>CLI commands</span></div>
+      <div class="stat"><b>426</b><span>tests in the pytest suite</span></div>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <p class="eyebrow">Architecture</p>
+    <h2>How it works</h2>
+    <p class="section-note">One build pipeline feeds a dual-layer store; three read paths consume it. Session knowledge flows back in as first-class graph nodes.</p>
+    <figure class="diagram">
+      <div class="diagram-scroll">
+      <svg viewBox="0 0 960 360" role="img" aria-label="codeGraph architecture: a git repository is parsed in parallel by tree-sitter parsers, references are resolved across files, and results are written to a dual-layer store (SQLite plus NetworkX). Three consumers read the store: context packs written to CLAUDE.md, an MCP server used by Claude Code and other agents, and the VS Code extension with a 3D graph view. Session notes from agents feed back into the store as note nodes.">
+        <defs>
+          <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+          </marker>
+          <marker id="arr-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="var(--amber)"/>
+          </marker>
+        </defs>
+
+        <!-- stage 1: repo -->
+        <rect x="16" y="120" width="118" height="72" rx="10" fill="none" stroke="currentColor"/>
+        <text x="75" y="151" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ink)">git repo</text>
+        <text x="75" y="170" text-anchor="middle" font-size="11" fill="currentColor">files + history</text>
+
+        <!-- stage 2: parsers -->
+        <rect x="196" y="104" width="140" height="104" rx="10" fill="none" stroke="currentColor"/>
+        <text x="266" y="132" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ink)">parsers</text>
+        <text x="266" y="151" text-anchor="middle" font-size="11" fill="currentColor">tree-sitter · 6 langs</text>
+        <text x="266" y="167" text-anchor="middle" font-size="11" fill="currentColor">regex fallback</text>
+        <text x="266" y="192" text-anchor="middle" font-size="10.5" fill="currentColor">parallel workers</text>
+
+        <!-- stage 3: resolution -->
+        <rect x="398" y="120" width="128" height="72" rx="10" fill="none" stroke="currentColor"/>
+        <text x="462" y="151" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ink)">resolution</text>
+        <text x="462" y="170" text-anchor="middle" font-size="11" fill="currentColor">cross-file refs</text>
+
+        <!-- stage 4: dual-layer store (accent) -->
+        <rect x="588" y="76" width="176" height="160" rx="12" fill="none" stroke="var(--accent)" stroke-width="2"/>
+        <text x="676" y="102" text-anchor="middle" font-size="13.5" font-weight="700" fill="var(--ink)">dual-layer store</text>
+        <rect x="604" y="116" width="144" height="42" rx="7" fill="none" stroke="currentColor"/>
+        <text x="676" y="134" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)">SQLite</text>
+        <text x="676" y="149" text-anchor="middle" font-size="10" fill="currentColor">durable · FTS5 search</text>
+        <rect x="604" y="166" width="144" height="42" rx="7" fill="none" stroke="currentColor"/>
+        <text x="676" y="184" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)">NetworkX</text>
+        <text x="676" y="199" text-anchor="middle" font-size="10" fill="currentColor">PageRank · BFS · impact</text>
+        <text x="676" y="226" text-anchor="middle" font-size="10" fill="currentColor">9 node kinds · 12 edge kinds</text>
+
+        <!-- pipeline arrows -->
+        <line x1="134" y1="156" x2="188" y2="156" stroke="currentColor" marker-end="url(#arr)"/>
+        <text x="161" y="146" text-anchor="middle" font-size="10" fill="currentColor">parse</text>
+        <line x1="336" y1="156" x2="390" y2="156" stroke="currentColor" marker-end="url(#arr)"/>
+        <text x="363" y="146" text-anchor="middle" font-size="10" fill="currentColor">symbols</text>
+        <line x1="526" y1="156" x2="580" y2="156" stroke="currentColor" marker-end="url(#arr)"/>
+        <text x="553" y="146" text-anchor="middle" font-size="10" fill="currentColor">upsert both</text>
+
+        <!-- consumers -->
+        <rect x="828" y="24" width="116" height="58" rx="10" fill="none" stroke="currentColor"/>
+        <text x="886" y="48" text-anchor="middle" font-size="12" font-weight="600" fill="var(--ink)">context packs</text>
+        <text x="886" y="65" text-anchor="middle" font-size="10.5" fill="currentColor">CLAUDE.md</text>
+
+        <rect x="828" y="126" width="116" height="58" rx="10" fill="none" stroke="currentColor"/>
+        <text x="886" y="150" text-anchor="middle" font-size="12" font-weight="600" fill="var(--ink)">MCP server</text>
+        <text x="886" y="167" text-anchor="middle" font-size="10.5" fill="currentColor">stdio / SSE :8765</text>
+
+        <rect x="828" y="228" width="116" height="58" rx="10" fill="none" stroke="currentColor"/>
+        <text x="886" y="252" text-anchor="middle" font-size="12" font-weight="600" fill="var(--ink)">VS Code ext</text>
+        <text x="886" y="269" text-anchor="middle" font-size="10.5" fill="currentColor">chat · 3D graph</text>
+
+        <line x1="764" y1="104" x2="820" y2="62" stroke="currentColor" marker-end="url(#arr)"/>
+        <text x="800" y="72" text-anchor="end" font-size="10" fill="currentColor">pack ≤8k tok</text>
+        <line x1="764" y1="156" x2="820" y2="156" stroke="currentColor" marker-end="url(#arr)"/>
+        <text x="792" y="147" text-anchor="middle" font-size="10" fill="currentColor">18 tools</text>
+        <line x1="764" y1="210" x2="820" y2="250" stroke="currentColor" marker-end="url(#arr)"/>
+
+        <!-- incremental update loop -->
+        <path d="M 75 192 L 75 320 L 462 320 L 462 200" fill="none" stroke="currentColor" stroke-dasharray="5 4" marker-end="url(#arr)"/>
+        <text x="268" y="311" text-anchor="middle" font-size="10" fill="currentColor">update · watch — re-index changed files only</text>
+
+        <!-- memory feedback loop (amber) -->
+        <path d="M 886 292 L 886 340 L 676 340 L 676 244" fill="none" stroke="var(--amber)" stroke-dasharray="5 4" marker-end="url(#arr-amber)"/>
+        <text x="781" y="331" text-anchor="middle" font-size="10" fill="var(--amber)">session notes → note nodes, linked to symbols</text>
+      </svg>
+      </div>
+      <figcaption>Build pipeline (left to right), the dual-layer store both layers are written to on every upsert, and the three read paths. Dashed lines are the two loops that keep the graph alive: incremental re-indexing from git, and agent session notes flowing back in as linked graph nodes (amber).</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="eyebrow">Capabilities</p>
+    <h2>Feature sets</h2>
+    <p class="section-note">Six capability groups. The amber-keyed group is the durable-memory layer — knowledge that persists and stays linked to code across agent sessions.</p>
+    <div class="cards">
+      <div class="card">
+        <p class="tag">Core engine</p>
+        <h3>Graph construction</h3>
+        <ul>
+          <li><strong>Dual-layer store</strong> — SQLite for durable indexed lookup + FTS5 full-text search; NetworkX for traversal algorithms</li>
+          <li><strong>6 languages</strong> parsed with tree-sitter (Python, TS/JS, Go, Rust, Java, C/C++), regex fallback for the rest</li>
+          <li><strong>Git-aware</strong> — commit history, per-file churn, incremental <code>update</code> and <code>watch</code></li>
+          <li><strong>Layer detection</strong> — files classified into presentation / business / data / infra / config / utility / test</li>
+          <li><strong>Convention mining</strong> — naming styles, doc coverage, code idioms</li>
+        </ul>
+      </div>
+      <div class="card">
+        <p class="tag">Analysis</p>
+        <h3>Queries &amp; impact</h3>
+        <ul>
+          <li><strong>Symbol lookup</strong> — exact, prefix, and full-text; callers and callees at any depth</li>
+          <li><strong>Impact analysis</strong> — blast radius of changing a symbol: affected code, files, tests</li>
+          <li><strong>Hot paths</strong> — most active code by PageRank × commit frequency</li>
+          <li><strong>Symbol-level diff</strong> — added / removed / modified symbols between any two git refs</li>
+          <li><strong>Test coverage mapping</strong> and TODO/FIXME extraction</li>
+        </ul>
+      </div>
+      <div class="card">
+        <p class="tag">Context packs</p>
+        <h3>Session-start context</h3>
+        <ul>
+          <li><strong>Token-budgeted CLAUDE.md</strong> — ~2–8k-token snapshot; tiered so essentials always fit</li>
+          <li><strong>Role overlays</strong> — <code>debug</code>, <code>review</code>, <code>feature</code> re-rank content for the task at hand</li>
+          <li><strong>Focus mode</strong> — pack centered on one file: its symbols, callers, imports, importers</li>
+          <li><strong>Protects hand-written CLAUDE.md</strong> — never overwrites without <code>--force</code></li>
+          <li><strong>HTML reports</strong> for humans (<code>codegraph report</code>)</li>
+        </ul>
+      </div>
+      <div class="card memory">
+        <p class="tag">Durable memory</p>
+        <h3>Knowledge that persists</h3>
+        <ul>
+          <li><strong>Linked session notes</strong> — decisions and gotchas stored as graph nodes with provenance, edged to the symbols they describe</li>
+          <li><strong>Smart surfacing</strong> — notes on hot-path code are preferred in packs and shown on symbol lookups</li>
+          <li><strong>LLM enrichment</strong> — API-generated summaries for undocumented symbols; cached, staleness-tracked, survive updates</li>
+          <li><strong>Graph lint</strong> — <code>codegraph lint --fix</code> detects and repairs graph rot</li>
+          <li><strong>Maintenance recipes</strong> — <code>codegraph hooks</code> prints session-end hooks and cron lines</li>
+        </ul>
+      </div>
+      <div class="card">
+        <p class="tag">MCP server</p>
+        <h3>Agent integration</h3>
+        <ul>
+          <li><strong>18 query tools</strong> — find symbol, callers, dependencies, impact, hot paths, health, notes, compress, more</li>
+          <li><strong>2 resources</strong> — <code>graph://context-pack</code> and <code>graph://summary</code> for instant orientation</li>
+          <li><strong>Two transports</strong> — stdio per session, or SSE for one shared live graph</li>
+          <li><strong>PR pattern mining</strong> — recurring review-feedback themes from merged GitHub PRs</li>
+        </ul>
+      </div>
+      <div class="card">
+        <p class="tag">VS Code</p>
+        <h3>Editor experience</h3>
+        <ul>
+          <li><strong><code>@codegraph</code> chat participant</strong> for Copilot, plus 12 registered language-model tools</li>
+          <li><strong>3D graph view</strong> — force-directed, layers stratified on Z-planes</li>
+          <li><strong>Error tracing</strong> — live diagnostics pulse error nodes red, fade unrelated code</li>
+          <li><strong>Backend choice</strong> — full Python backend over MCP, or zero-install native WASM parsing in-process</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="eyebrow">Rollout</p>
+    <h2>Deployment options</h2>
+    <p class="section-note">Four ways to run it, from a single laptop to a team-shared service. They compose — most teams land on per-dev CLI plus the automation loop.</p>
+    <div class="deploy-grid">
+      <div class="deploy">
+        <h3>Per-developer CLI</h3>
+        <p class="who">Best for: individual developers, default setup</p>
+        <p>Each editor session spawns the MCP server as a stdio subprocess against the local clone. No ports, no shared state, nothing to operate.</p>
+        <pre>pip install -e ".[all-langs]"
+codegraph init .        <span class="c"># build the graph</span>
+codegraph serve .       <span class="c"># stdio MCP server</span></pre>
+      </div>
+      <div class="deploy">
+        <h3>Shared SSE server</h3>
+        <p class="who">Best for: one live graph across multiple clients</p>
+        <p>A single long-running server on port 8765 that Claude Code desktop and the VS Code extension connect to simultaneously — everyone queries the same up-to-date graph.</p>
+        <pre>codegraph serve . --transport sse --port 8765
+<span class="c"># VS Code: "codegraph.transport": "sse",</span>
+<span class="c">#          "codegraph.ssePort": 8765</span></pre>
+      </div>
+      <div class="deploy">
+        <h3>VS Code native backend</h3>
+        <p class="who">Best for: zero-install rollout, no Python required</p>
+        <p>The extension's built-in Node/WASM backend parses all six languages in-process and answers the core read tools. Enrichment, diff, and PR mining stay CLI-only.</p>
+        <pre><span class="c">// settings.json</span>
+"codegraph.backend": "native"</pre>
+      </div>
+      <div class="deploy">
+        <h3>Automation loop</h3>
+        <p class="who">Best for: keeping graphs fresh without anyone thinking about it</p>
+        <p><code>codegraph watch</code> re-indexes on every git change; a session-end hook or nightly cron folds in commits and repairs rot. <code>codegraph hooks</code> prints the config.</p>
+        <pre><span class="c"># nightly cron</span>
+codegraph update . --re-enrich && \
+codegraph lint . --fix</pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="eyebrow">Prerequisites</p>
+    <h2>Requirements &amp; configuration</h2>
+    <p class="section-note" style="margin-bottom:22px">Everything lives in the repo — no external services required. LLM enrichment and PR mining are optional and key-gated.</p>
+    <div class="req">
+      <dl>
+        <div class="pair"><dt>Runtime</dt><dd>Python ≥ 3.11 for the backend; Node only for building the VS Code extension (or none at all with the native backend)</dd></div>
+        <div class="pair"><dt>Install</dt><dd><code>pip install -e ".[all-langs]"</code> · add <code>,git</code> extra for GitHub PR mining</dd></div>
+        <div class="pair"><dt>Artifacts</dt><dd>All graph data under <code>.codegraph/</code> in the repo root (SQLite DB, snapshot, notes, caches) — add to backup/ignore policies once</dd></div>
+        <div class="pair"><dt>Config</dt><dd>Environment variables or optional <code>codegraph.toml</code>; no config needed for core use</dd></div>
+        <div class="pair"><dt>Optional keys</dt><dd><code>CODEGRAPH_ANTHROPIC_API_KEY</code> (LLM summaries) · <code>CODEGRAPH_GITHUB_TOKEN</code> (PR mining)</dd></div>
+        <div class="pair"><dt>Network</dt><dd>Fully offline for indexing and queries; outbound HTTPS only for the two optional key-gated features</dd></div>
+      </dl>
+    </div>
+  </div>
+</section>
+
+<div class="wrap">
+  <footer>
+    <span>codeGraph v0.1.0 · monorepo: Python backend + TypeScript VS Code extension · 426-test suite</span>
+    <span>Prepared for IT team review · August 2026</span>
+  </footer>
+</div>
+
+</body>
+</html>
