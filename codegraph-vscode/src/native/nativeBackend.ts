@@ -19,7 +19,13 @@ import type { Backend, GNode, ParseResult } from './types';
 const SKIP_DIRS = new Set([
   '.git', 'node_modules', '__pycache__', '.venv', 'venv', 'env', 'dist',
   'build', '.tox', 'vendor', '.mypy_cache', '.pytest_cache', '.codegraph',
+  'out', '.next', 'target', 'coverage', '.cache', '.idea',
 ]);
+
+// Files above this size are almost always generated (minified bundles, data
+// dumps) — parsing them risks an uncatchable WASM out-of-memory abort that
+// takes down the whole extension host.
+const MAX_FILE_BYTES = 1_000_000;
 
 export interface NativeBackendOptions {
   /** Directory holding grammar wasms (e.g. node_modules/tree-sitter-wasms/out). */
@@ -69,19 +75,35 @@ export class NativeBackend implements Backend {
       for (const t of res.todos) this.allTodos.push({ file: rel, ...t });
     };
 
+    let sinceYield = 0;
     for (const file of this.walk(this.repoPath)) {
+      // Decide whether this is a parseable source file BEFORE touching its
+      // contents — a workspace can contain arbitrarily large data files, and
+      // readFileSync on one of those OOMs the extension host.
+      const isPython = file.endsWith('.py') || file.endsWith('.pyi');
+      const spec = isPython ? undefined : specForFile(file);
+      const parser = isPython ? pyParser : (spec ? specParsers.get(spec) : undefined);
+      if (!parser) continue;
+
+      let size = 0;
+      try { size = fs.statSync(file).size; } catch { continue; }
+      if (size === 0 || size > MAX_FILE_BYTES) continue;
+
       const rel = path.relative(this.repoPath, file).replace(/\\/g, '/');
       let source: string;
       try { source = fs.readFileSync(file, 'utf8'); } catch { continue; }
 
-      if (pyParser && (file.endsWith('.py') || file.endsWith('.pyi'))) {
-        this.tryParse(pyParser, source, (tree) => ingestResult(rel, py.parse(tree, rel, source)));
-        continue;
-      }
-      const spec = specForFile(file);
-      const parser = spec ? specParsers.get(spec) : undefined;
-      if (spec && parser) {
+      if (isPython) {
+        this.tryParse(parser, source, (tree) => ingestResult(rel, py.parse(tree, rel, source)));
+      } else if (spec) {
         this.tryParse(parser, source, (tree) => ingestResult(rel, parseGeneric(spec, tree, rel, source)));
+      }
+
+      // Yield to the event loop periodically so a large workspace doesn't
+      // freeze the extension host during indexing.
+      if (++sinceYield >= 25) {
+        sinceYield = 0;
+        await new Promise<void>((r) => setImmediate(r));
       }
     }
 
