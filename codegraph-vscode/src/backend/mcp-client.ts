@@ -160,7 +160,8 @@ export class McpClient implements Backend {
   private _probeSse(port: number, timeoutMs: number): Promise<void> {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => { req.destroy(); reject(new Error('probe timeout')); }, timeoutMs);
-      const req = http.get(`http://127.0.0.1:${port}/sse`, (res) => {
+      // WHATWG URL object — a string here is parsed with the deprecated url.parse() (DEP0169)
+      const req = http.get(new URL(`http://127.0.0.1:${port}/sse`), (res) => {
         clearTimeout(timer);
         res.destroy();
         // Any HTTP response means the server is up
@@ -179,7 +180,7 @@ export class McpClient implements Backend {
 
       let resolved = false;
 
-      const req = http.get(`http://127.0.0.1:${port}/sse`, (res) => {
+      const req = http.get(new URL(`http://127.0.0.1:${port}/sse`), (res) => {
         if (res.statusCode !== 200) {
           clearTimeout(timer);
           reject(new Error(`SSE server returned HTTP ${res.statusCode}`));
