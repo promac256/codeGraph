@@ -230,6 +230,19 @@ function initGraph(nodes: GNode[], links: GLink[]): void {
       showTooltip(node);
     });
 
+  // Size the renderer to the panel and keep it in sync — without this the
+  // canvas keeps its initial dimensions when the webview panel is resized.
+  const fitToContainer = () => {
+    if (!graph) return;
+    const w = container.clientWidth;
+    const h = container.clientHeight;
+    if (w > 0 && h > 0) {
+      graph.width(w).height(h);
+    }
+  };
+  fitToContainer();
+  new ResizeObserver(fitToContainer).observe(container);
+
   // Custom D3 force to keep Z anchored to layer after initial layout
   (graph as any).d3Force('z-layer', () => {
     allNodes.forEach((n) => {
