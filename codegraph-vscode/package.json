@@ -2,7 +2,7 @@
   "name": "codegraph",
   "displayName": "codeGraph — Knowledge Graph Copilot",
   "description": "Knowledge graph for your codebase. Wires into GitHub Copilot and shows a live hive visualization of all code nodes and relationships.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "codegraph",
   "engines": {
     "vscode": "^1.93.0"
